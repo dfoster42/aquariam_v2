@@ -1,0 +1,8 @@
+aspect: 4:3
+height: 200
+A maroon anemonefish. A deep oval body, slightly taller and rounder than a common
+clownfish. Deep burgundy red shading to a darker plum along the underside. A single
+narrow white band directly behind the eye, running from the top of the head down across
+the gill. Rounded tail fin, rounded dorsal fin and rounded pectoral fin, all the same
+burgundy with dark margins. One large round eye with a black pupil and a white
+catchlight.

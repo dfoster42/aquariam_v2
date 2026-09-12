@@ -1,0 +1,19 @@
+kind: background
+aspect: 3:4
+height: 1280
+A calm underwater aquarium scene, viewed side-on through the glass, drawn as a flat
+vector illustration in the same style as the fish: bold simple shapes, flat areas of
+colour, a dark navy outline on the larger forms, and no gradients inside a shape.
+
+Deep blue water filling the upper two thirds, shading in two or three flat steps from
+darker at the top to lighter toward the middle. A pale sand floor across the bottom with
+a soft wavy upper edge. Low rounded rocks resting on the sand. A few clumps of seaweed
+and soft coral rising from the floor, in muted teal, dusty green and dull violet, all
+darker and less saturated than the water.
+
+Everything is scenery and sits low and to the sides, leaving the middle of the frame open
+water. The whole image is deliberately low contrast and muted, so that brightly coloured
+fish drawn on top of it stand out clearly against it.
+
+No fish. No text. No lettering. No watermark. No border. No frame. No bubbles. No light
+rays. No tank furniture. No filter. No thermometer. No treasure chest. No diver.

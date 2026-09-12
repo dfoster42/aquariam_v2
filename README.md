@@ -40,6 +40,46 @@ To regenerate the three starting species from scratch:
 godot --headless --script res://tools/generate_species.gd
 ```
 
+## Art
+
+Sprites are generated through the Antigravity CLI and graded by a second model before
+they are allowed into the project.
+
+```bash
+python3 tools/art/build.py clownfish                 # cached render, free to re-cut
+python3 tools/art/build.py clownfish --force         # re-roll; this is what costs quota
+python3 tools/art/build.py shark --ref /tmp/aquarium-art/raw/clownfish.jpg
+python3 tools/art/qa.py clownfish shark              # grade shipped sprites
+```
+
+The pipeline is adapted from the sprout-party creature-art tooling; the rules it
+encodes were learned there, not here.
+
+**The model that made the image does not grade it.** `qa.py` sends the sprite to a
+second model against a fixed rubric — an open "does this look right" invites agreement.
+It samples twice and unions the failures, because the judge is inattentive rather than
+wrong. No parsable JSON is a failure, not a pass. `build.py` stages a render and copies
+it into `assets/textures/` only on a clean verdict; `--force-qa` is the only way past
+that, and using it belongs in the commit message.
+
+**Every subject reaches the judge as `subject.png`.** The filename is a leak — in the
+source pipeline a descriptive name measurably inflated the pass rate.
+
+**Backgrounds are keyed and graded differently.** A brief declares `kind: background`,
+skips the chroma key (there is nothing to cut out) and gets its own rubric, whose items
+are about staying out of the fish's way rather than about anatomy.
+
+Only the render costs quota. It is cached in `/tmp/aquarium-art/raw/`, so re-cutting
+after a pipeline change is free. `429 RESOURCE_EXHAUSTED` names a reset time and means
+stop; "no image generated in response" is transient and worth one retry.
+
+Transparency comes from a chroma key, not a luminance threshold: briefs ask for flat
+magenta, which no fish in the catalogue comes near on any channel. A luma cut would take
+the shark's grey back and the clownfish's white bands with it.
+
+**Every sprite faces left.** `scripts/fish.gd` mirrors a fish swimming right, so art
+drawn facing right will swim backwards.
+
 ## Layout
 
 ```
@@ -50,6 +90,7 @@ resources/species/ one .tres per species
 assets/textures/   sprites and tank backdrop
 test/              headless checks
 tools/             one-shot generators and the screenshot capture
+tools/art/         the art pipeline: briefs, generation, keying, QA
 ```
 
 ## Rendering

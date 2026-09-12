@@ -3,7 +3,7 @@ extends SceneTree
 ## Run: godot --headless --script res://tools/generate_species.gd
 
 func _initialize() -> void:
-	var clownfish := _make("Clownfish", "res://assets/textures/clown.png", 55.0, 36.0, 140.0)
+	var clownfish := _make("Clownfish", "res://assets/textures/clownfish.png", 55.0, 36.0, 140.0)
 	_save(clownfish, "clownfish")
 
 	var anemonefish := _make("Anemonefish", "res://assets/textures/nemo.png", 48.0, 44.0, 130.0)

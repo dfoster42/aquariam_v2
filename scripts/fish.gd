@@ -107,12 +107,16 @@ func is_eaten() -> bool:
 
 ## Rotates toward `heading` and mirrors the sprite so the fish never swims
 ## upside down when travelling right-to-left.
+##
+## Every sprite in assets/textures/ is drawn facing LEFT — tools/art/prompts/style.txt
+## fixes that for the whole catalogue — so it is a fish swimming RIGHT that needs
+## mirroring, not one swimming left.
 func _face(heading: Vector2, delta: float) -> void:
 	var desired := heading.angle()
 	var facing_left := absf(wrapf(desired, -PI, PI)) > PI / 2.0
 	if facing_left:
 		desired = wrapf(desired + PI, -PI, PI)
-	sprite.flip_h = facing_left
+	sprite.flip_h = not facing_left
 	sprite.rotation = rotate_toward(sprite.rotation, desired, deg_to_rad(TURN_RATE) * delta)
 
 func _apply_size() -> void:
