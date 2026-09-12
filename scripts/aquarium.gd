@@ -28,10 +28,10 @@ const MAX_POPULATION: int = 1500
 ## that panning has somewhere to go.
 @export var tank_size: Vector2 = Vector2(1080, 1920)
 
-## Multiplied into the backdrop. The shipped backdrop is a photograph and the
-## fish are flat vector art; dimming and cooling it is what lets a bright fish
-## read against it. A stopgap until the backdrop is redrawn to match the fish.
-@export var backdrop_tint: Color = Color(0.48, 0.58, 0.68)
+## Multiplied into the backdrop. White now that the backdrop is drawn to sit under
+## the fish rather than compete with them — it was a stopgap that dimmed the
+## photograph this replaced, and applying it to the drawn backdrop would crush it.
+@export var backdrop_tint: Color = Color.WHITE
 
 var selected_species: FishSpecies
 

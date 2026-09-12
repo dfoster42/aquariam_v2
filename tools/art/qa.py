@@ -283,6 +283,13 @@ def main() -> int:
     parser.add_argument("--timeout", default=DEFAULT_TIMEOUT)
     parser.add_argument("--samples", type=int, default=DEFAULT_SAMPLES)
     parser.add_argument("--raw", action="store_true")
+    parser.add_argument(
+        "--kind",
+        default="sprite",
+        choices=["sprite", "background"],
+        help="Which rubric to grade against. A backdrop judged on the sprite rubric "
+        "fails every item, which says nothing.",
+    )
     args = parser.parse_args()
 
     if not args.species and not args.image:
@@ -298,7 +305,8 @@ def main() -> int:
             print(f"{name}: no image at {path}", file=sys.stderr)
             clean = False
             continue
-        passed, _ = check_image(path, name, sprite_px, args.model, args.timeout, args.samples, args.raw)
+        passed, _ = check_image(
+            path, name, sprite_px, args.model, args.timeout, args.samples, args.raw, args.kind)
         clean = clean and passed
 
     print("\nall clean" if clean else "\nat least one image failed")

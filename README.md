@@ -47,10 +47,9 @@ defaults to STOP, and one full-rect container left at the default silently swall
 every tap meant for the tank — fish just stop spawning, with no error. The smoke test
 asserts this.
 
-The backdrop is dimmed and cooled through `backdrop_tint` (mean luma 113 -> 64). It is a
-stopgap: the shipped backdrop is a photograph and the fish are flat vector art, so they
-fight each other. The real fix is redrawing the backdrop to match, which is why
-`tools/art/prompts/background.txt` exists.
+`backdrop_tint` multiplies into the backdrop and is white by default. It briefly held a
+dimming colour to make the original photograph survivable behind flat vector fish; the
+drawn backdrop needs no such help, and applying the old value to it would crush it.
 
 ## Adding a species
 
@@ -92,9 +91,28 @@ that, and using it belongs in the commit message.
 **Every subject reaches the judge as `subject.png`.** The filename is a leak — in the
 source pipeline a descriptive name measurably inflated the pass rate.
 
-**Backgrounds are keyed and graded differently.** A brief declares `kind: background`,
-skips the chroma key (there is nothing to cut out) and gets its own rubric, whose items
-are about staying out of the fish's way rather than about anatomy.
+**The backdrop is drawn, not generated.** `tools/art/draw_background.py` draws it
+directly and deterministically:
+
+```bash
+python3 tools/art/draw_background.py --out /tmp/aquarium-art/staged/background.jpg
+python3 tools/art/qa.py --image /tmp/aquarium-art/staged/background.jpg --kind background
+```
+
+Stepped water, a sand floor, rocks and seaweed are almost entirely geometry, and the
+source pipeline's rule is that geometry is arithmetic rather than adjectives. Drawing it
+is exact, repeatable, and costs no generation quota — which the fish sprites need. It
+still goes through the judge, against a background rubric whose items are about staying
+out of the fish's way rather than about anatomy.
+
+Two things learned by drawing it wrong first: everything below the waterline is a
+silhouette (giving the sand and rocks their own local colour reproduced exactly the
+contrast problem the photograph had), and water must be a per-row gradient (four flat
+bands leave four visible seams).
+
+`build.py` also understands `kind: background` for a *generated* backdrop, with a brief
+at `tools/art/prompts/background.txt`. That path is unused and its generate and judge
+steps have never been run — only its downstream half is tested.
 
 Only the render costs quota. It is cached in `/tmp/aquarium-art/raw/`, so re-cutting
 after a pipeline change is free. `429 RESOURCE_EXHAUSTED` names a reset time and means
