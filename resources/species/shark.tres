@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="FishSpecies" format=3]
+
+[ext_resource type="Script" path="res://scripts/fish_species.gd" id="1_ueko5"]
+[ext_resource type="Resource" path="res://resources/species/clownfish.tres" id="2_iwbeh"]
+[ext_resource type="Resource" path="res://resources/species/anemonefish.tres" id="3_hbhaa"]
+[ext_resource type="Texture2D" path="res://assets/textures/shark.png" id="4_1jvpi"]
+
+[resource]
+script = ExtResource("1_ueko5")
+display_name = "Shark"
+texture = ExtResource("4_1jvpi")
+speed = 95.0
+size = 90.0
+sight = 200.0
+eats = Array[ExtResource("1_ueko5")]([ExtResource("2_iwbeh"), ExtResource("3_hbhaa")])

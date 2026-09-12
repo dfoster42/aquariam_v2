@@ -1,0 +1,17 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/aquarium.gd" id="1_aquarium"]
+[ext_resource type="Script" path="res://scripts/fish_species.gd" id="2_5dg5m"]
+[ext_resource type="Texture2D" path="res://assets/textures/tank_background.jpg" id="2_background"]
+[ext_resource type="Resource" path="res://resources/species/clownfish.tres" id="3_71x8f"]
+[ext_resource type="Resource" path="res://resources/species/anemonefish.tres" id="4_odjgq"]
+[ext_resource type="Resource" path="res://resources/species/shark.tres" id="5_6g8si"]
+
+[node name="Aquarium" type="Node2D" unique_id=562826831]
+script = ExtResource("1_aquarium")
+available_species = Array[ExtResource("2_5dg5m")]([ExtResource("3_71x8f"), ExtResource("4_odjgq"), ExtResource("5_6g8si")])
+
+[node name="Background" type="Sprite2D" parent="." unique_id=709158858]
+texture = ExtResource("2_background")
+
+[node name="FishLayer" type="Node2D" parent="." unique_id=66022372]
