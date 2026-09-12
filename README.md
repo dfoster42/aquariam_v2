@@ -13,7 +13,13 @@ Open the project in Godot 4.6 and press F5, or:
 godot --path . res://scenes/aquarium.tscn
 ```
 
-Tap (or click) anywhere to drop a fish of the currently selected species.
+Tap (or click) the tank to drop a fish of the selected species. Drag to pan, pinch to
+zoom (mouse wheel on desktop). The bottom row picks a species; the top bar shows the
+population and pauses the tank.
+
+A tap and a drag share one finger, so a press stays provisional until it either moves
+past `DRAG_SLOP` or is released still enough and soon enough to count as a tap. Only the
+release spawns.
 
 ## Tests
 
@@ -23,7 +29,28 @@ A headless functional check of spawning, movement, tank bounds and predation:
 godot --headless --script res://test/smoke_test.gd
 ```
 
-Exits non-zero on failure, so it drops straight into CI.
+It covers spawning, movement, tank bounds, predation, pause, species selection,
+tap-to-spawn, and the safe-area inset arithmetic.
+
+CI runs it on every push and pull request. Note that `godot --script` exits **0** on a
+script parse error — measured, not assumed — so a broken test file would otherwise pass
+silently. The workflow greps for the test's own `RESULT: PASS` line; that is what
+actually gates the build.
+
+## Layout notes
+
+The tank is a fixed world (`tank_size`), not the viewport. A camera looks at part of it,
+so fish swim to the edge of the *tank* while the view moves independently.
+
+Every layout container in `ui.tscn` sets `mouse_filter = 2` (IGNORE). A `Control`
+defaults to STOP, and one full-rect container left at the default silently swallows
+every tap meant for the tank — fish just stop spawning, with no error. The smoke test
+asserts this.
+
+The backdrop is dimmed and cooled through `backdrop_tint` (mean luma 113 -> 64). It is a
+stopgap: the shipped backdrop is a photograph and the fish are flat vector art, so they
+fight each other. The real fix is redrawing the backdrop to match, which is why
+`tools/art/prompts/background.txt` exists.
 
 ## Adding a species
 

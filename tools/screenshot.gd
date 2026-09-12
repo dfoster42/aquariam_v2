@@ -7,7 +7,7 @@ const SETTLE_FRAMES: int = 150
 var _frames: int = 0
 
 func _initialize() -> void:
-	root.add_child(load("res://scenes/aquarium.tscn").instantiate())
+	root.add_child(load("res://scenes/main.tscn").instantiate())
 
 func _process(_delta: float) -> bool:
 	_frames += 1

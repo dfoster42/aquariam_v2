@@ -13,6 +13,11 @@ const ARRIVE_DISTANCE: float = 24.0
 const BITE_DISTANCE: float = 14.0
 ## Degrees per second the sprite rotates toward its heading.
 const TURN_RATE: float = 360.0
+## How far from level a fish is allowed to look, in degrees. Headings are drawn from
+## anywhere in the tank, so an unclamped sprite pitches to 80 degrees nose-down on a
+## routine wander and reads as a dying fish rather than a swimming one. The fish still
+## travels along its true heading; only how far it tips to show it is limited.
+const PITCH_LIMIT: float = 22.0
 
 var species: FishSpecies
 var behaviour: Behaviour = Behaviour.WANDER
@@ -117,6 +122,8 @@ func _face(heading: Vector2, delta: float) -> void:
 	if facing_left:
 		desired = wrapf(desired + PI, -PI, PI)
 	sprite.flip_h = not facing_left
+	var limit := deg_to_rad(PITCH_LIMIT)
+	desired = clampf(desired, -limit, limit)
 	sprite.rotation = rotate_toward(sprite.rotation, desired, deg_to_rad(TURN_RATE) * delta)
 
 func _apply_size() -> void:

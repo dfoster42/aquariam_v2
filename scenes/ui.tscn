@@ -1,0 +1,52 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui.gd" id="1_ui"]
+
+[node name="UI" type="CanvasLayer"]
+script = ExtResource("1_ui")
+
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="Safe" type="MarginContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="Stack" type="VBoxContainer" parent="Root/Safe"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 8
+
+[node name="TopBar" type="HBoxContainer" parent="Root/Safe/Stack"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 8
+
+[node name="Population" type="Label" parent="Root/Safe/Stack/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+text = "0 fish"
+
+[node name="Pause" type="Button" parent="Root/Safe/Stack/TopBar"]
+layout_mode = 2
+focus_mode = 0
+text = "Pause"
+
+[node name="Spacer" type="Control" parent="Root/Safe/Stack"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="Picker" type="HBoxContainer" parent="Root/Safe/Stack"]
+layout_mode = 2
+alignment = 1
+mouse_filter = 2
+theme_override_constants/separation = 8

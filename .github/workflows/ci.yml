@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke-test:
+    name: Headless smoke test
+    runs-on: ubuntu-latest
+    env:
+      # Keep in step with the `config/features` line in project.godot.
+      GODOT_VERSION: 4.6.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Downloaded straight from the engine's own release page rather than through a
+      # third-party setup action, so CI runs the same binary a developer would.
+      - name: Install Godot
+        run: |
+          set -euo pipefail
+          NAME="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${NAME}.zip"
+          curl -fsSL -o godot.zip "$URL"
+          unzip -q godot.zip
+          mkdir -p "$HOME/.local/bin"
+          mv "$NAME" "$HOME/.local/bin/godot"
+          chmod +x "$HOME/.local/bin/godot"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show version
+        run: godot --version
+
+      # Assets and the global class cache have to exist before anything can load a
+      # scene. A cold import resolves its own dependencies over two passes: the first
+      # registers class_name scripts, the second lets scenes referencing them load.
+      - name: Import project
+        run: |
+          godot --headless --import || true
+          godot --headless --import
+
+      # `godot --script` exits 0 even on a script parse error — measured, not assumed —
+      # so a broken test file would sail through CI. The test prints exactly one RESULT
+      # line; requiring it to say PASS is what actually gates the build.
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          godot --headless --script res://test/smoke_test.gd 2>&1 | tee output.txt
+          grep -qx 'RESULT: PASS' output.txt
