@@ -18,6 +18,9 @@ var _start_positions: Dictionary = {}
 var _failures: Array[String] = []
 
 func _initialize() -> void:
+	# The tank restores a save in preference to seeding, so a leftover save from a real
+	# session would silently change what this test is measuring.
+	TankStore.clear()
 	_main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_main)
 
@@ -35,6 +38,7 @@ func _begin() -> void:
 	_check_ui_passes_touches()
 	_check_ui_on_screen()
 	_check_safe_insets()
+	_check_persistence()
 	_check_species_selection()
 	_check_tap_spawns()
 
@@ -103,6 +107,57 @@ func _check_safe_insets() -> void:
 	# A platform reporting nothing must not produce negative margins.
 	var empty: Vector4 = TankUI.safe_insets(Rect2i(0, 0, 0, 0), Vector2.ZERO, Vector2(800, 600))
 	_check(empty == Vector4.ZERO, "empty safe area should give zero insets, got %s" % empty)
+
+
+## Save and restore must round-trip: same count, same species, same positions.
+func _check_persistence() -> void:
+	var before: Array[Dictionary] = []
+	for f in _tank.fish():
+		before.append({"species": f.species.resource_path, "pos": f.global_position})
+
+	_check(TankStore.save(_tank) == OK, "saving the tank failed")
+	var data := TankStore.read()
+	_check(data.get("fish", []).size() == before.size(),
+		"save holds %d fish, tank has %d" % [data.get("fish", []).size(), before.size()])
+
+	# Restore into a second tank and compare.
+	var other: Aquarium = load("res://scenes/aquarium.tscn").instantiate()
+	root.add_child(other)
+	other.clear_tank()
+	_check(other.restore(data), "restore() reported nothing restored")
+	_check(other.population() == before.size(),
+		"restored %d fish, expected %d" % [other.population(), before.size()])
+
+	var drift := 0.0
+	var restored: Array[Fish] = _tank_fish(other)
+	restored.sort_custom(func(a: Fish, b: Fish) -> bool: return a.global_position.x < b.global_position.x)
+	var expected := before.duplicate()
+	expected.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["pos"].x < b["pos"].x)
+	for i in mini(restored.size(), expected.size()):
+		drift = maxf(drift, restored[i].global_position.distance_to(expected[i]["pos"]))
+		if restored[i].species.resource_path != expected[i]["species"]:
+			_check(false, "restored fish %d is the wrong species" % i)
+	# Positions are stored as whole pixels, so a sub-pixel difference is expected.
+	_check(drift <= 1.5, "restored positions drifted by %.2f px" % drift)
+
+	# A save naming a species the build no longer has must cost that fish, not the tank.
+	var salted := data.duplicate(true)
+	salted["fish"] = (salted["fish"] as Array).duplicate(true)
+	(salted["fish"] as Array).append({"species": "res://resources/species/ghost.tres", "x": 10, "y": 10})
+	var third: Aquarium = load("res://scenes/aquarium.tscn").instantiate()
+	root.add_child(third)
+	third.clear_tank()
+	_check(third.restore(salted), "restore() gave up because of one unknown species")
+	_check(third.population() == before.size(),
+		"unknown species should be skipped: got %d, expected %d" % [third.population(), before.size()])
+
+	other.queue_free()
+	third.queue_free()
+	TankStore.clear()
+
+
+func _tank_fish(tank: Aquarium) -> Array[Fish]:
+	return tank.fish()
 
 
 func _check_species_selection() -> void:

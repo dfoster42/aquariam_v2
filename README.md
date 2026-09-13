@@ -62,6 +62,35 @@ script parse error — measured, not assumed — so a broken test file would oth
 silently. The workflow greps for the test's own `RESULT: PASS` line; that is what
 actually gates the build.
 
+## Persistence
+
+The tank is written to `user://tank.json` when the app closes or is backgrounded, and
+restored on launch; a fresh tank is seeded only when there is nothing to restore.
+
+JSON rather than a `.tres`: a saved Resource is a script-bearing file the engine will
+instantiate on load, which turns a save file into a code path. Species are stored by
+`resource_path`, so reordering the species list or renaming a display name does not
+orphan a tank, and a fish whose species no longer exists is dropped rather than failing
+the whole restore.
+
+## Platforms
+
+Web and macOS export and run. **iOS does not**, and the blocker is upstream:
+
+    Aquarium.xcframework/ios-arm64_x86_64-simulator -> lipo -archs -> x86_64
+
+Godot 4.6.1's official iOS template ships a simulator slice that is x86_64 only, despite
+the directory being named for both architectures. Apple-silicon simulators are arm64 and
+Xcode 26 no longer runs x86_64 simulator apps under Rosetta, so `xcodebuild -arch x86_64`
+links fine and then fails to install with "Failed to find matching arch". A device build
+would use the arm64 slice and work, but needs a paid Apple developer account for
+signing. Building the iOS template from source with an arm64-simulator slice is the
+other way round it.
+
+`export_presets.cfg` carries `application/app_store_team_id="0000000000"`, a placeholder
+so the exporter will run at all. It is not a real team ID and must be replaced before
+any build that is signed or distributed.
+
 ## Layout notes
 
 The tank is a fixed world (`tank_size`), not the viewport. A camera looks at part of it,

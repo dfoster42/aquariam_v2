@@ -59,7 +59,9 @@ func _ready() -> void:
 
 	background.modulate = backdrop_tint
 	_fit_background()
-	_seed_starting_population()
+
+	if not restore(TankStore.read()):
+		_seed_starting_population()
 
 ## The largest step a fish will take in one frame. After a stall, an unclamped delta
 ## teleports every fish across the tank in a single tick.
@@ -131,9 +133,19 @@ func toggle_paused() -> void:
 func population() -> int:
 	return _fish.size()
 
+## The living fish, in spawn order.
+##
+## The authoritative list — not `fish_layer.get_children()`. A fish that has been eaten
+## or cleared leaves `_fish` at once but stays a child until the end of the frame, so
+## reading the node tree can see fish the tank already considers gone. That is how a
+## save came to contain dead fish.
+func fish() -> Array[Fish]:
+	return _fish.duplicate()
+
 func clear_tank() -> void:
-	for fish in _fish:
-		fish.queue_free()
+	for f in _fish:
+		fish_layer.remove_child(f)
+		f.queue_free()
 	_fish.clear()
 	population_changed.emit(0)
 
@@ -142,6 +154,7 @@ func _on_fish_eaten(fish: Fish) -> void:
 	if index == -1:
 		return
 	_fish.remove_at(index)
+	fish_layer.remove_child(fish)
 	fish.queue_free()
 	population_changed.emit(_fish.size())
 
@@ -155,6 +168,45 @@ func _fit_background() -> void:
 	var cover := maxf(tank_size.x / texture_size.x, tank_size.y / texture_size.y)
 	background.scale = Vector2(cover, cover)
 	background.position = tank_size * 0.5
+
+## Rebuilds the tank from a save. Returns false when there was nothing usable, so the
+## caller can fall back to seeding a fresh tank.
+##
+## A fish whose species is no longer in the catalogue is skipped rather than failing the
+## whole restore: a save outlives the build that wrote it, and losing one species should
+## not cost the player the rest of the tank.
+func restore(data: Dictionary) -> bool:
+	var entries: Array = data.get("fish", [])
+	if entries.is_empty():
+		return false
+
+	var by_path: Dictionary = {}
+	for species in available_species:
+		by_path[species.resource_path] = species
+
+	var restored := 0
+	var skipped := 0
+	for entry: Variant in entries:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var species: FishSpecies = by_path.get(entry.get("species", ""), null)
+		if species == null:
+			skipped += 1
+			continue
+		if spawn(species, Vector2(float(entry.get("x", 0)), float(entry.get("y", 0)))) != null:
+			restored += 1
+
+	var selected: FishSpecies = by_path.get(data.get("selected", ""), null)
+	if selected != null:
+		select_species(selected)
+
+	if skipped > 0:
+		push_warning("Restored %d fish; skipped %d whose species is no longer present." % [restored, skipped])
+	return restored > 0
+
+## Writes the tank to disk. Safe to call at any time.
+func save() -> Error:
+	return TankStore.save(self)
 
 func _seed_starting_population() -> void:
 	for species in available_species:

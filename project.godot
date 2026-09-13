@@ -32,5 +32,10 @@ pointing/emulate_touch_from_mouse=true
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
+; Required by the iOS, Android and Apple-silicon macOS exporters. Comments in a Godot
+; config file start with ";" — a "#" line here is parsed as a key and silently takes
+; the setting with it, which cost several export attempts whose only symptom was an
+; empty configuration-error list.
+textures/vram_compression/import_etc2_astc=true
 renderer/rendering_method.mobile="gl_compatibility"
 textures/canvas_textures/default_texture_filter=1

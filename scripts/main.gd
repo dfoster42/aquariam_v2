@@ -11,6 +11,17 @@ extends Node2D
 func _ready() -> void:
 	camera.setup(aquarium.bounds())
 	camera.tapped.connect(_on_tapped)
+	# Desktop closes via the window; a phone usually just suspends the app and may
+	# never deliver a close request at all, so backgrounding has to save too.
+	get_tree().auto_accept_quit = false
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			aquarium.save()
+			get_tree().quit()
+		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_WM_GO_BACK_REQUEST:
+			aquarium.save()
 
 func _on_tapped(world_position: Vector2) -> void:
 	aquarium.spawn_selected(world_position)
