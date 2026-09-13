@@ -20,7 +20,10 @@ var _group := ButtonGroup.new()
 
 @onready var safe: MarginContainer = $Root/Safe
 @onready var population_label: Label = $Root/Safe/Stack/TopBar/Population
+@onready var tanks_button: Button = $Root/Safe/Stack/TopBar/Tanks
 @onready var pause_button: Button = $Root/Safe/Stack/TopBar/Pause
+@onready var tank_panel: PanelContainer = $Root/Safe/Stack/TankPanel
+@onready var tank_list: VBoxContainer = $Root/Safe/Stack/TankPanel/TankList
 @onready var picker: HBoxContainer = $Root/Safe/Stack/Picker
 
 func _ready() -> void:
@@ -30,6 +33,7 @@ func _ready() -> void:
 		return
 
 	pause_button.pressed.connect(_aquarium.toggle_paused)
+	tanks_button.pressed.connect(_toggle_tank_panel)
 	_aquarium.paused_changed.connect(_on_paused_changed)
 	_aquarium.population_changed.connect(_on_population_changed)
 	_aquarium.species_selected.connect(_on_species_selected)
@@ -39,6 +43,82 @@ func _ready() -> void:
 
 	get_viewport().size_changed.connect(_apply_safe_area)
 	_apply_safe_area()
+
+func _toggle_tank_panel() -> void:
+	tank_panel.visible = not tank_panel.visible
+	if tank_panel.visible:
+		_build_tank_list()
+
+## One row per saved tank, plus a row to make a new one.
+##
+## Rebuilt on open rather than kept in sync: the list is short, opening it is rare, and
+## a rebuild cannot drift from what is actually on disk.
+func _build_tank_list() -> void:
+	for child in tank_list.get_children():
+		child.queue_free()
+
+	var active := TankStore.active_slot()
+	for slot: Variant in TankStore.slots():
+		var id: String = str(slot.get("id", ""))
+		var row := HBoxContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+		var open := Button.new()
+		open.text = "%s%s  (%d fish)" % [
+			"> " if id == active else "", slot.get("name", id), _fish_in(id)]
+		open.focus_mode = Control.FOCUS_NONE
+		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		open.disabled = id == active
+		open.pressed.connect(_switch_to.bind(id))
+		row.add_child(open)
+
+		var remove := Button.new()
+		remove.text = "Delete"
+		remove.focus_mode = Control.FOCUS_NONE
+		# Never offer to delete the only tank: it would leave the app with nowhere to
+		# save and the next launch would silently make a fresh one.
+		remove.disabled = TankStore.slots().size() <= 1
+		remove.pressed.connect(_delete.bind(id))
+		row.add_child(remove)
+
+		tank_list.add_child(row)
+
+	var new_tank := Button.new()
+	new_tank.text = "New aquarium"
+	new_tank.focus_mode = Control.FOCUS_NONE
+	new_tank.disabled = TankStore.slots().size() >= TankStore.MAX_SLOTS
+	new_tank.pressed.connect(_create)
+	tank_list.add_child(new_tank)
+
+func _fish_in(slot_id: String) -> int:
+	return TankStore.read(slot_id).get("fish", []).size()
+
+## Saving the current tank before leaving it is the whole contract of switching.
+func _switch_to(slot_id: String) -> void:
+	_aquarium.save()
+	TankStore.set_active(slot_id)
+	_reload()
+
+func _create() -> void:
+	_aquarium.save()
+	var id := TankStore.create_slot("Aquarium %d" % (TankStore.slots().size() + 1))
+	if id == "":
+		return
+	_reload()
+
+func _delete(slot_id: String) -> void:
+	var was_active := slot_id == TankStore.active_slot()
+	TankStore.delete_slot(slot_id)
+	if was_active:
+		_reload()
+	else:
+		_build_tank_list()
+
+## Reloading the scene is how a tank is swapped: the Aquarium builds itself from the
+## active slot in _ready, so there is no second code path for "load a different tank"
+## that could drift from the one used at launch.
+func _reload() -> void:
+	get_tree().reload_current_scene()
 
 func _build_picker() -> void:
 	for child in picker.get_children():

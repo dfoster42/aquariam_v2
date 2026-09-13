@@ -34,7 +34,7 @@ func _run() -> void:
 	# Backdate the save, exactly as an absence would.
 	var data := TankStore.read()
 	data["saved_at"] = int(Time.get_unix_time_from_system()) - AWAY_SECONDS
-	var file := FileAccess.open(TankStore.SAVE_PATH, FileAccess.WRITE)
+	var file := FileAccess.open(TankStore.slot_path(TankStore.active_slot()), FileAccess.WRITE)
 	file.store_string(JSON.stringify(data))
 	file.close()
 
@@ -89,7 +89,7 @@ func _check_long_absence() -> void:
 
 	var data := TankStore.read()
 	data["saved_at"] = int(Time.get_unix_time_from_system()) - 3 * 3600
-	var file := FileAccess.open(TankStore.SAVE_PATH, FileAccess.WRITE)
+	var file := FileAccess.open(TankStore.slot_path(TankStore.active_slot()), FileAccess.WRITE)
 	file.store_string(JSON.stringify(data))
 	file.close()
 

@@ -69,6 +69,27 @@ A fish's facing is tracked separately from its sprite. `flip_h` snaps the instan
 heading crosses vertical while `rotation` eases, so a mouth derived from sprite state
 teleported a body length sideways and sharks could bite prey behind their own tails.
 
+## Multiple aquariums
+
+Tanks are slots on disk:
+
+```
+user://tanks/index.json   the slot list, and which one is active
+user://tanks/<id>.json    one tank
+```
+
+The Tanks button lists them with live fish counts, switches, creates and deletes.
+Switching saves the current tank first, then reloads the scene — the Aquarium already
+builds itself from the active slot in `_ready`, so there is no second "load a different
+tank" path that could drift from the one used at launch. Deleting the only tank is
+refused, since it would leave the app with nowhere to save.
+
+A pre-slots `user://tank.json` is migrated into a slot named "My Aquarium" rather than
+stranded.
+
+Offline progression is per-slot: each tank carries its own `saved_at`, so a tank left
+alone for a week catches up on its own terms while the others do not.
+
 ## Offline progression
 
 The tank is credited for time the app was closed, as a population model rather than a

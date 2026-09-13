@@ -65,10 +65,14 @@ func _begin() -> void:
 	for fish in _tank.fish():
 		_start_positions[fish] = fish.global_position
 
-## Every layout container must be MOUSE_FILTER_IGNORE. A Control defaults to STOP,
-## and one full-rect container left at the default swallows every tap meant for the
-## tank: fish stop spawning and nothing reports an error. Cheap to assert, and the
-## failure mode is silent, so it is asserted.
+## Nothing VISIBLE may swallow a tap meant for the tank. A Control defaults to
+## MOUSE_FILTER_STOP, and one full-rect container left at the default silently eats
+## every tap: fish stop spawning and nothing reports an error.
+##
+## Scoped to what is visible in the tree, because a panel that deliberately covers the
+## tank — the tank switcher — is *supposed* to block while it is open, or the player
+## spawns fish through it while choosing an aquarium. The invariant that matters is that
+## nothing blocks in the app's normal, panel-closed state.
 func _check_ui_passes_touches() -> void:
 	var swallowing: Array[String] = []
 	var queue: Array[Node] = [_ui]
@@ -76,11 +80,14 @@ func _check_ui_passes_touches() -> void:
 		var node: Node = queue.pop_back()
 		queue.append_array(node.get_children())
 		var control := node as Control
-		if control == null or control is Button:
+		if control == null or control is Button or not control.is_visible_in_tree():
 			continue
 		if control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
 			swallowing.append(control.name)
 	_check(swallowing.is_empty(), "UI nodes would swallow tank taps: %s" % ", ".join(swallowing))
+	# And the switcher must start closed, or the app opens onto a panel.
+	var panel := _ui.get_node_or_null("Root/Safe/Stack/TankPanel") as Control
+	_check(panel != null and not panel.visible, "the tank switcher should start hidden")
 
 ## Every control must lie inside the viewport. A safe-area inset measured against the
 ## wrong rectangle put the pause button ~500px past the right edge and the picker below
@@ -94,7 +101,7 @@ func _check_ui_on_screen() -> void:
 		var node: Node = queue.pop_back()
 		queue.append_array(node.get_children())
 		var control := node as Control
-		if control == null or not control.visible or control.get_rect().get_area() <= 0.0:
+		if control == null or not control.is_visible_in_tree() or control.get_rect().get_area() <= 0.0:
 			continue
 		if not view.grow(1.0).encloses(control.get_global_rect()):
 			offscreen.append("%s at %s" % [control.name, control.get_global_rect()])

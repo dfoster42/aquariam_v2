@@ -35,6 +35,11 @@ size_flags_horizontal = 3
 mouse_filter = 2
 text = "0 fish"
 
+[node name="Tanks" type="Button" parent="Root/Safe/Stack/TopBar"]
+layout_mode = 2
+focus_mode = 0
+text = "Tanks"
+
 [node name="Pause" type="Button" parent="Root/Safe/Stack/TopBar"]
 layout_mode = 2
 focus_mode = 0
@@ -44,6 +49,14 @@ text = "Pause"
 layout_mode = 2
 size_flags_vertical = 3
 mouse_filter = 2
+
+[node name="TankPanel" type="PanelContainer" parent="Root/Safe/Stack"]
+visible = false
+layout_mode = 2
+
+[node name="TankList" type="VBoxContainer" parent="Root/Safe/Stack/TankPanel"]
+layout_mode = 2
+theme_override_constants/separation = 6
 
 [node name="Picker" type="HBoxContainer" parent="Root/Safe/Stack"]
 layout_mode = 2
