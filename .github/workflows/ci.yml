@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          for test in smoke bite slots offline offline_restore ecosystem; do
+          for test in smoke bite shelter slots offline offline_restore ecosystem; do
             echo "::group::$test"
             godot --headless --script "res://test/${test}_test.gd" 2>&1 | tee "$test.log"
             if grep -qx 'RESULT: PASS' "$test.log"; then

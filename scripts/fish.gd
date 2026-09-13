@@ -40,6 +40,11 @@ var _breed_timer: float = 0.0
 ## then "bite" prey that was behind its tail.
 var _facing: Vector2 = Vector2.LEFT
 
+## Whether this fish is currently inside a plant's cover. Set once per frame by the
+## Aquarium rather than worked out per predator, so a fish with ten hunters near it
+## still only tests its own surroundings once.
+var sheltered: bool = false
+
 var _predators: Array[FishSpecies] = []
 var _target: Vector2 = Vector2.ZERO
 var _bounds: Rect2 = Rect2()
@@ -74,7 +79,7 @@ func set_bounds(bounds: Rect2) -> void:
 
 ## Advances this fish by `delta` seconds. `hash` must already contain every
 ## other fish in the tank for this frame.
-func tick(delta: float, hash: SpatialHash) -> void:
+func tick(delta: float, hash: SpatialHash, shelter: SpatialHash = null) -> void:
 	if _is_eaten:
 		return
 
@@ -82,19 +87,25 @@ func tick(delta: float, hash: SpatialHash) -> void:
 	_breed_timer = maxf(0.0, _breed_timer - delta)
 	_apply_size()
 
-	var heading := _decide_heading(hash)
+	var heading := _decide_heading(hash, shelter)
 	if heading != Vector2.ZERO:
 		global_position += heading * species.speed * delta
 		_face(heading, delta)
 
 	global_position = _clamp_to_bounds(global_position)
 
-func _decide_heading(hash: SpatialHash) -> Vector2:
+func _decide_heading(hash: SpatialHash, shelter: SpatialHash) -> Vector2:
 	var neighbours := hash.query_radius(global_position, species.sight, self)
 
 	var nearest_threat: Fish = _nearest_of(neighbours, _predators)
 	if nearest_threat != null:
 		behaviour = Behaviour.FLEE
+		# Break for cover if any is in sight, otherwise straight away. Without this,
+		# plants would shelter only the prey that happened to drift into one, and the
+		# player would have no way to see that cover was doing anything.
+		var refuge := _nearest_shelter(shelter)
+		if refuge != null and not sheltered:
+			return global_position.direction_to(refuge.global_position)
 		return nearest_threat.global_position.direction_to(global_position)
 
 	var nearest_prey: Fish = _nearest_of(neighbours, species.eats)
@@ -130,6 +141,10 @@ func _nearest_of(neighbours: Array[Node2D], wanted: Array[FishSpecies]) -> Fish:
 	for node: Node2D in neighbours:
 		var other := node as Fish
 		if other == null or other._is_eaten or not wanted.has(other.species):
+			continue
+		# Prey inside cover is invisible to whatever hunts it. Checked here rather than
+		# at the bite, so a shark does not swim to a plant and wait beside it.
+		if other.sheltered and wanted == species.eats:
 			continue
 		var d := global_position.distance_squared_to(other.global_position)
 		if d < best_distance_sq:
@@ -170,6 +185,22 @@ func note_bred() -> void:
 
 func is_past_lifespan() -> bool:
 	return species.lifespan > 0.0 and age > species.lifespan
+
+## The nearest sheltering plant within sight, or null.
+func _nearest_shelter(shelter: SpatialHash) -> Decor:
+	if shelter == null:
+		return null
+	var best: Decor = null
+	var best_distance_sq := INF
+	for node: Node2D in shelter.query_radius(global_position, species.sight, null):
+		var item := node as Decor
+		if item == null:
+			continue
+		var d := global_position.distance_squared_to(item.global_position)
+		if d < best_distance_sq:
+			best_distance_sq = d
+			best = item
+	return best
 
 func be_eaten() -> void:
 	if _is_eaten:

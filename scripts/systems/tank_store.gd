@@ -164,11 +164,22 @@ static func capture(tank: Aquarium) -> Dictionary:
 			"y": roundi(f.global_position.y),
 			"age": roundi(f.age),
 		})
+	var decor: Array = []
+	for item in tank.decor():
+		if item == null or item.kind == null:
+			continue
+		decor.append({
+			"kind": item.kind.resource_path,
+			"x": roundi(item.global_position.x),
+			"y": roundi(item.global_position.y),
+		})
+
 	return {
 		"version": FORMAT_VERSION,
 		"saved_at": int(Time.get_unix_time_from_system()),
 		"selected": tank.selected_species.resource_path if tank.selected_species else "",
 		"fish": fish,
+		"decor": decor,
 	}
 
 static func save(tank: Aquarium, slot_id: String = "") -> Error:

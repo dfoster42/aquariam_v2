@@ -69,6 +69,25 @@ A fish's facing is tracked separately from its sprite. `flip_h` snaps the instan
 heading crosses vertical while `rotation` eases, so a mouth derived from sprite state
 teleported a body length sideways and sharks could bite prey behind their own tails.
 
+## Decor, and shelter
+
+Plants are placeable the same way fish are: one `DecorKind` .tres per item in
+`available_decor`, no code per item. The picker holds fish and decor in one button
+group, so a tap only ever places one kind of thing.
+
+**Plants hide prey from sharks.** A plant with a `shelter_radius` conceals prey inside
+it: a predator skips sheltered prey when choosing a target, checked while hunting rather
+than at the bite, so a shark does not swim to a plant and loiter beside it. Fleeing prey
+also break for cover when any is in sight — without that, plants would only shelter the
+prey that happened to drift into one and the player could never see cover working.
+
+Concealment is computed once per frame for every fish, not per predator: a fish with ten
+hunters near it would otherwise test its surroundings ten times for the same answer.
+Decor never moves, so its spatial grid is rebuilt only when the set changes.
+
+Decor is saved with the tank, and restored *before* the fish, so a reloaded tank's
+shelter is in effect on the first frame rather than one frame late.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:
@@ -235,17 +254,18 @@ camera shows a portrait slice and pans across it, so fish swim to the edge of th
 while the view moves independently. On a portrait phone the camera frames roughly 37% of
 the map's width at its widest zoom.
 
-`tools/art/draw_background.py` draws the terrain: a sea floor built from layered sine
-waves with ravines carved into it, a hazier ridge behind, rocks bedded into the landform
-and stands of kelp reaching up through the water column.
+`tools/art/draw_background.py` draws the terrain: a gently undulating sea floor, a
+hazier ridge behind it, rocks and coral bedded into the ground, and stands of kelp.
 
-Three things that took a few passes:
-- Rocks must be darker than the floor they stand on, and the far ones drawn *before* the
-  near floor, or they read as pale slabs lying on top of the landscape.
-- A ravine needs darkness behind it. Cutting into the near floor simply revealed the
-  lighter far ridge, and the cuts drew as pale spikes.
-- Ravines need width and a smoothstep falloff. Narrow cuts with a squared falloff came
-  to a point and read as cracks, not canyons.
+The floor is deliberately close to flat. A dramatic version came first, with real
+slopes and ravines, and it did not read as natural: rocks and kelp sample the heightmap
+at a single x and then draw a shape that assumes level ground beneath, so on any real
+gradient they hung in the water with nothing under them. Seating objects against a slope
+properly is [issue #4](https://github.com/dfoster42/aquariam_v2/issues/4); until then
+there are no slopes to get wrong.
+
+Rocks must also be darker than the floor they stand on, and the far ones drawn *before*
+the near floor, or they read as pale slabs lying on top of the landscape.
 
 Populations scale with the map: it is roughly 3.4x the area of the original
 single-screen tank, so the same on-screen density needs proportionally more fish.

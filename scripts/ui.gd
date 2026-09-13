@@ -124,14 +124,29 @@ func _build_picker() -> void:
 	for child in picker.get_children():
 		child.queue_free()
 	for species in _aquarium.available_species:
-		var button := Button.new()
-		button.text = species.display_name
-		button.toggle_mode = true
-		button.button_group = _group
-		button.focus_mode = Control.FOCUS_NONE
+		var button := _picker_button(species.display_name)
 		button.button_pressed = species == _aquarium.selected_species
 		button.pressed.connect(_aquarium.select_species.bind(species))
 		picker.add_child(button)
+
+	if not _aquarium.available_decor.is_empty():
+		var divider := VSeparator.new()
+		divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		picker.add_child(divider)
+	for kind in _aquarium.available_decor:
+		var button := _picker_button(kind.display_name)
+		button.pressed.connect(_aquarium.select_decor.bind(kind))
+		picker.add_child(button)
+
+## One group across fish and decor, so arming a plant disarms the fish and a tap can
+## only ever place one kind of thing.
+func _picker_button(label: String) -> Button:
+	var button := Button.new()
+	button.text = label
+	button.toggle_mode = true
+	button.button_group = _group
+	button.focus_mode = Control.FOCUS_NONE
+	return button
 
 func _on_population_changed(count: int) -> void:
 	population_label.text = "%d fish" % count
@@ -140,8 +155,10 @@ func _on_paused_changed(paused: bool) -> void:
 	pause_button.text = "Resume" if paused else "Pause"
 
 func _on_species_selected(species: FishSpecies) -> void:
-	for button: Button in picker.get_children():
-		button.set_pressed_no_signal(button.text == species.display_name)
+	for child in picker.get_children():
+		var button := child as Button
+		if button != null:
+			button.set_pressed_no_signal(button.text == species.display_name)
 
 ## The inset on each edge (left, top, right, bottom) in screen pixels.
 ##

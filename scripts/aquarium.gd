@@ -15,8 +15,10 @@ signal fish_born(species: FishSpecies)
 signal fish_died(species: FishSpecies, of_old_age: bool)
 signal species_selected(species: FishSpecies)
 signal paused_changed(paused: bool)
+signal decor_changed(count: int)
 
 const FISH_SCENE: PackedScene = preload("res://scenes/fish.tscn")
+const DECOR_SCENE: PackedScene = preload("res://scenes/decor.tscn")
 ## Refuse to spawn beyond this; keeps a stray tap-and-hold from hanging the app.
 const MAX_POPULATION: int = 1500
 
@@ -25,6 +27,10 @@ const MAX_POPULATION: int = 1500
 ## array rather than a directory scan, because exported builds rewrite
 ## res://...tres to .tres.remap and a filename scan would come back empty.
 @export var available_species: Array[FishSpecies] = []
+
+## Everything the player can place that is not a fish. Same contract as
+## `available_species`: drop a .tres in and it appears in the picker.
+@export var available_decor: Array[DecorKind] = []
 
 ## The tank's size in world units — a map several screens wide, not one screen. The
 ## camera shows a portrait slice of it and pans across; see tools/art/draw_background.py
@@ -46,8 +52,12 @@ const MAX_POPULATION: int = 1500
 @export var backdrop_tint: Color = Color.WHITE
 
 var selected_species: FishSpecies
+## What a tap places. Either a species or a decor kind; never both.
+var selected_decor: DecorKind
 
 var _fish: Array[Fish] = []
+var _decor: Array[Decor] = []
+var _shelter_hash: SpatialHash
 var _predator_map: Dictionary = {}
 var _hash: SpatialHash
 var _bounds: Rect2 = Rect2()
@@ -56,6 +66,8 @@ var _since_autosave: float = 0.0
 
 @onready var background: Sprite2D = $Background
 @onready var fish_layer: Node2D = $FishLayer
+@onready var decor_back: Node2D = $DecorBack
+@onready var decor_front: Node2D = $DecorFront
 
 func _ready() -> void:
 	available_species = available_species.filter(func(s: FishSpecies) -> bool: return s != null)
@@ -66,8 +78,10 @@ func _ready() -> void:
 		return a.display_name < b.display_name)
 
 	_bounds = Rect2(Vector2.ZERO, tank_size)
+	available_decor = available_decor.filter(func(d: DecorKind) -> bool: return d != null)
 	_predator_map = _derive_predators(available_species)
 	_hash = SpatialHash.new(_largest_sight())
+	_shelter_hash = SpatialHash.new(_largest_shelter())
 	selected_species = available_species[0]
 
 	background.modulate = backdrop_tint
@@ -94,8 +108,9 @@ func _process(delta: float) -> void:
 	_hash.clear()
 	for fish in _fish:
 		_hash.insert(fish)
+	_mark_sheltered()
 	for fish in _fish:
-		fish.tick(step, _hash)
+		fish.tick(step, _hash, _shelter_hash)
 	_reap()
 	_breed()
 
@@ -104,6 +119,25 @@ func _process(delta: float) -> void:
 		if _since_autosave >= autosave_interval:
 			_since_autosave = 0.0
 			save()
+
+## Flags every fish that is inside a plant's cover, once per frame.
+##
+## Done here rather than inside each predator's search: a fish with ten hunters near it
+## would otherwise test its surroundings ten times, and the answer is the same each time.
+func _mark_sheltered() -> void:
+	if _decor.is_empty():
+		for fish in _fish:
+			fish.sheltered = false
+		return
+	for fish in _fish:
+		fish.sheltered = false
+	for item in _decor:
+		if not item.shelters():
+			continue
+		for node: Node2D in _hash.query_radius(item.global_position, item.kind.shelter_radius, null):
+			var fish := node as Fish
+			if fish != null:
+				fish.sheltered = true
 
 ## Removes fish that have outlived their species' lifespan.
 ##
@@ -175,15 +209,60 @@ func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 	population_changed.emit(_fish.size())
 	return fish
 
-## Spawns the currently selected species. What a tap on the tank calls.
-func spawn_selected(position: Vector2) -> Fish:
+## Places whatever the picker currently has selected. What a tap on the tank calls.
+func place_selected(position: Vector2) -> Node2D:
+	if selected_decor != null:
+		return place_decor(selected_decor, position)
 	return spawn(selected_species, position)
 
+## Adds one decor item at `position`.
+func place_decor(kind: DecorKind, position: Vector2) -> Decor:
+	if not is_node_ready() or kind == null:
+		return null
+	var item: Decor = DECOR_SCENE.instantiate()
+	item.configure(kind)
+	item.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	(decor_front if kind.in_front else decor_back).add_child(item)
+	_decor.append(item)
+	_rebuild_shelter()
+	decor_changed.emit(_decor.size())
+	return item
+
+func decor() -> Array[Decor]:
+	return _decor.duplicate()
+
+func clear_decor() -> void:
+	for item in _decor:
+		item.get_parent().remove_child(item)
+		item.queue_free()
+	_decor.clear()
+	_rebuild_shelter()
+	decor_changed.emit(0)
+
+## Decor does not move, so its grid is rebuilt only when the set changes.
+func _rebuild_shelter() -> void:
+	_shelter_hash.clear()
+	for item in _decor:
+		if item.shelters():
+			_shelter_hash.insert(item)
+
+func _largest_shelter() -> float:
+	var largest := 1.0
+	for kind in available_decor:
+		largest = maxf(largest, kind.shelter_radius)
+	return largest
+
 func select_species(species: FishSpecies) -> void:
-	if species == null or selected_species == species:
+	if species == null:
+		return
+	selected_decor = null
+	if selected_species == species:
 		return
 	selected_species = species
 	species_selected.emit(species)
+
+func select_decor(kind: DecorKind) -> void:
+	selected_decor = kind
 
 func set_paused(paused: bool) -> void:
 	if _paused == paused:
@@ -249,8 +328,21 @@ func _fit_background() -> void:
 ## not cost the player the rest of the tank.
 func restore(data: Dictionary) -> bool:
 	var entries: Array = data.get("fish", [])
-	if entries.is_empty():
+	var decor_entries: Array = data.get("decor", [])
+	if entries.is_empty() and decor_entries.is_empty():
 		return false
+
+	# Decor first: plants placed before the fish means a restored tank's shelter is
+	# already in effect on the very first frame, rather than one frame late.
+	var decor_by_path: Dictionary = {}
+	for kind in available_decor:
+		decor_by_path[kind.resource_path] = kind
+	for entry: Variant in decor_entries:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var kind: DecorKind = decor_by_path.get(entry.get("kind", ""), null)
+		if kind != null:
+			place_decor(kind, Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))))
 
 	var by_path: Dictionary = {}
 	for species in available_species:
@@ -275,6 +367,8 @@ func restore(data: Dictionary) -> bool:
 
 	if skipped > 0:
 		push_warning("Restored %d fish; skipped %d whose species is no longer present." % [restored, skipped])
+	if restored == 0 and not _decor.is_empty():
+		return true
 	if restored > 0:
 		_apply_time_away(Offline.elapsed_since(
 			int(data.get("saved_at", 0)), int(Time.get_unix_time_from_system())))

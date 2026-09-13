@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="DecorKind" format=3]
+
+[ext_resource type="Script" path="res://scripts/decor_kind.gd" id="1_pnfxx"]
+[ext_resource type="Texture2D" path="res://assets/textures/anemone.png" id="2_dqunx"]
+
+[resource]
+script = ExtResource("1_pnfxx")
+display_name = "Anemone"
+texture = ExtResource("2_dqunx")
+size = 150.0
+shelter_radius = 90.0

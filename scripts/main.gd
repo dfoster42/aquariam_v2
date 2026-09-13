@@ -33,4 +33,4 @@ func _notification(what: int) -> void:
 			aquarium.save()
 
 func _on_tapped(world_position: Vector2) -> void:
-	aquarium.spawn_selected(world_position)
+	aquarium.place_selected(world_position)

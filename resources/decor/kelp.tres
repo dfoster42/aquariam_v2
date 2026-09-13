@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="DecorKind" format=3]
+
+[ext_resource type="Script" path="res://scripts/decor_kind.gd" id="1_5iffc"]
+[ext_resource type="Texture2D" path="res://assets/textures/kelp.png" id="2_kprql"]
+
+[resource]
+script = ExtResource("1_5iffc")
+display_name = "Kelp"
+texture = ExtResource("2_kprql")
+size = 300.0
+shelter_radius = 130.0
