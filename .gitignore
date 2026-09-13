@@ -2,3 +2,5 @@
 build/
 dd/
 *.translation
+__pycache__/
+*.pyc
