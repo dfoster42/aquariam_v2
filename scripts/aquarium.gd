@@ -61,14 +61,26 @@ func _ready() -> void:
 	_fit_background()
 	_seed_starting_population()
 
-func _physics_process(delta: float) -> void:
+## The largest step a fish will take in one frame. After a stall, an unclamped delta
+## teleports every fish across the tank in a single tick.
+const MAX_STEP: float = 0.1
+
+## Deliberately _process and not _physics_process. The tank has no collision and no
+## rigid bodies, so nothing here needs the fixed clock — and running on it was actively
+## harmful. Measured with tools/benchmark.gd: past ~500 fish one simulation step
+## overran its 16.67 ms budget, so the engine ran extra steps to catch up, which made
+## the next step later still, until it pinned at max_physics_steps_per_frame (8) and
+## the frame time locked to exactly 8 x 16.67 = 133.33 ms — 7 fps, from 60, over one
+## step of the benchmark. On _process a heavy frame is simply a longer frame.
+func _process(delta: float) -> void:
 	if _paused:
 		return
+	var step := minf(delta, MAX_STEP)
 	_hash.clear()
 	for fish in _fish:
 		_hash.insert(fish)
 	for fish in _fish:
-		fish.tick(delta, _hash)
+		fish.tick(step, _hash)
 
 ## The rect fish are confined to, in world coordinates.
 func bounds() -> Rect2:

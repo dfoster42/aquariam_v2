@@ -2,8 +2,33 @@
 
 A living aquarium for mobile and desktop, built in [Godot 4.6](https://godotengine.org).
 
-A rewrite of an earlier Go/Fyne prototype. Fyne capped out around 50 fish at 6 Hz;
-this runs hundreds at 60 fps and exports to iOS, Android, desktop and web.
+A rewrite of an earlier Go/Fyne prototype. Fyne capped out around 50 fish at 6 Hz.
+
+## Measured performance
+
+`tools/benchmark.gd`, vsync disabled, Apple M5 Pro desktop, Compatibility renderer:
+
+| fish | mean frame | fps |
+| ---: | ---: | ---: |
+| 50 | 1.10 ms | 912 |
+| 100 | 1.75 ms | 572 |
+| 197 | 3.66 ms | 273 |
+| 347 | 8.48 ms | 118 |
+| 524 | 16.85 ms | 59 |
+| 781 | 30.97 ms | 32 |
+| 1069 | 49.26 ms | 20 |
+
+Roughly **520 fish at 60 fps** on this machine. Phones will be lower; that number has
+not been measured on device yet.
+
+Cost grows around n^1.5, not linearly. That is density rather than a defect in the
+spatial grid: the tank is a fixed size, so doubling the population doubles how many
+neighbours fall inside each fish's sight radius. The grid stops each fish scanning
+*every* other fish; it cannot stop the tank getting crowded.
+
+```bash
+godot --script res://tools/benchmark.gd
+```
 
 ## Running
 
@@ -150,3 +175,11 @@ supports web export. On macOS and iOS, Godot translates it to Metal via ANGLE.
 Neighbour lookups go through a uniform spatial grid (`scripts/systems/spatial_hash.gd`),
 rebuilt once per frame by `Aquarium` and shared by every fish, replacing the
 prototype's all-pairs scan.
+
+The simulation runs in `_process`, deliberately not `_physics_process`. The tank has no
+collision and no rigid bodies, and the fixed clock was actively harmful: past ~500 fish
+a step overran its 16.67 ms budget, so the engine ran extra steps to catch up, which
+made the next step later still, until it pinned at `max_physics_steps_per_frame` (8) and
+frame time locked to exactly 8 x 16.67 = 133.33 ms. The tank fell 60 fps to 7 fps
+between two adjacent benchmark steps. On `_process` a heavy frame is just a longer
+frame.
