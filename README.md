@@ -75,21 +75,66 @@ the whole restore.
 
 ## Platforms
 
-Web and macOS export and run. **iOS does not**, and the blocker is upstream:
+| target | status |
+| --- | --- |
+| Web | exports and runs; checked in a browser at 375x812 |
+| macOS | exports; universal `x86_64 arm64` |
+| iOS device | builds `arm64`; needs a paid Apple developer account to sign |
+| iOS simulator | **not possible** — see below |
+| Android | not attempted; needs a JDK and the Android SDK |
 
-    Aquarium.xcframework/ios-arm64_x86_64-simulator -> lipo -archs -> x86_64
+### iOS simulator does not work, and will not
 
-Godot 4.6.1's official iOS template ships a simulator slice that is x86_64 only, despite
-the directory being named for both architectures. Apple-silicon simulators are arm64 and
-Xcode 26 no longer runs x86_64 simulator apps under Rosetta, so `xcodebuild -arch x86_64`
-links fine and then fails to install with "Failed to find matching arch". A device build
-would use the arm64 slice and work, but needs a paid Apple developer account for
-signing. Building the iOS template from source with an arm64-simulator slice is the
-other way round it.
+Godot's official iOS export template ships a simulator slice that is x86_64 only, while
+its own metadata claims otherwise:
+
+```
+libgodot.ios.debug.xcframework/Info.plist  -> SupportedArchitectures: [arm64, x86_64]
+libgodot.ios.debug.xcframework/ios-arm64_x86_64-simulator/libgodot.a
+  lipo -archs -> x86_64
+```
+
+Apple-silicon simulators are arm64 and Xcode 26 no longer runs x86_64 simulator apps
+under Rosetta, so an x86_64 build links and then fails to install with "Failed to find
+matching arch".
+
+This is upstream and deliberate, not a local misconfiguration
+([godot#118161](https://github.com/godotengine/godot/issues/118161)). From a Godot
+maintainer on that thread: the template "doesn't include arm64 simulator binaries at
+all", the code that used to synthesise a simulator library from the device binary "was
+removed some time ago", and a simulator build "is almost useless in any case, since it
+does not support Metal in required capacity". The open PR that closes the issue is
+[#122365, "[iOS/visionOS] Remove simulator support"](https://github.com/godotengine/godot/pull/122365).
+
+So `application/generate_simulator_library_if_missing` cannot help, and building the
+engine from source would only reproduce a simulator that cannot do Metal properly.
+
+The issue title says 4.6.1 works; it does not. The reporter retracted that in the
+thread, and it was re-measured here against a clean 4.6.1 template.
+
+**What to do instead:** build for a device (the `ios-arm64` slice is genuinely arm64 and
+links fine — only signing is missing), or run it on an Apple-silicon Mac through Xcode's
+"Designed for [iPad,iPhone]" destination, which also builds cleanly here. Note that a
+locally built iOS binary cannot be launched from the shell: it carries `platform 2`
+(iOS), and `open` refuses it with "incorrect executable format". It has to be run from
+Xcode.
 
 `export_presets.cfg` carries `application/app_store_team_id="0000000000"`, a placeholder
 so the exporter will run at all. It is not a real team ID and must be replaced before
-any build that is signed or distributed.
+any signed or distributed build.
+
+### A renderer decision this raises
+
+The project uses the Compatibility renderer (OpenGL ES / WebGL), chosen for device reach
+and because it is the only method that supports web export. The same maintainer notes
+that OpenGL on iOS "is deprecated for a long time... Apple can remove it in any iOS
+update or stop accepting apps using it."
+
+That does not affect web, desktop or Android, and nothing here has been rejected by
+anyone — but a serious iOS target probably wants
+`rendering/renderer/rendering_method.mobile="mobile"` (Metal) while web keeps
+`gl_compatibility`. Godot supports that split per platform. Not changed yet, because it
+cannot be tested without a device build.
 
 ## Layout notes
 
