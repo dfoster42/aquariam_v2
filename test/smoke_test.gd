@@ -15,7 +15,10 @@ var _started: bool = false
 var _paused_at: Dictionary = {}
 var _pause_phase: bool = false
 var _start_positions: Dictionary = {}
+var _population_before_run: int = 0
 var _failures: Array[String] = []
+# A member, not a local: a GDScript lambda captures locals by value.
+var _eaten: int = 0
 
 func _initialize() -> void:
 	# The tank restores a save in preference to seeding, so a leftover save from a real
@@ -30,9 +33,17 @@ func _begin() -> void:
 	_tank = _main.get_node("Aquarium")
 	_camera = _main.get_node("CameraRig")
 	_ui = _main.get_node("UI")
+	_tank.fish_died.connect(func(_s: FishSpecies, old: bool) -> void:
+		if not old: _eaten += 1)
 
 	_check(_tank.available_species.size() == 3, "expected 3 species, got %d" % _tank.available_species.size())
-	_check(_tank.population() == 9, "expected 9 seeded fish, got %d" % _tank.population())
+	# Derived, not hardcoded: seeding follows each species' starting_count, so a tuning
+	# change should not read as a test failure.
+	var seeded := 0
+	for species: FishSpecies in _tank.available_species:
+		seeded += species.starting_count
+	_check(_tank.population() == seeded,
+		"expected %d seeded fish, got %d" % [seeded, _tank.population()])
 	_check(_tank.bounds().size == _tank.tank_size, "bounds %s do not match tank_size %s" % [_tank.bounds().size, _tank.tank_size])
 
 	_check_ui_passes_touches()
@@ -45,8 +56,9 @@ func _begin() -> void:
 	# Force a predation event: one shark dropped on top of one clownfish.
 	_tank.spawn(_species_named("Clownfish"), Vector2(300, 300))
 	_tank.spawn(_species_named("Shark"), Vector2(330, 300))
+	_population_before_run = _tank.population()
 
-	for fish: Fish in _tank.get_node("FishLayer").get_children():
+	for fish in _tank.fish():
 		_start_positions[fish] = fish.global_position
 
 ## Every layout container must be MOUSE_FILTER_IGNORE. A Control defaults to STOP,
@@ -188,7 +200,7 @@ func _process(delta: float) -> bool:
 		_pause_phase = true
 		_elapsed = 0.0
 		_tank.set_paused(true)
-		for fish: Fish in _tank.get_node("FishLayer").get_children():
+		for fish in _tank.fish():
 			_paused_at[fish] = fish.global_position
 		return false
 
@@ -202,7 +214,7 @@ func _report_movement() -> void:
 	var bounds := _tank.bounds()
 	var moved := 0
 	var escaped := 0
-	for fish: Fish in _tank.get_node("FishLayer").get_children():
+	for fish in _tank.fish():
 		if _start_positions.has(fish) and fish.global_position.distance_to(_start_positions[fish]) > 1.0:
 			moved += 1
 		if not bounds.grow(2.0).has_point(fish.global_position):
@@ -210,12 +222,14 @@ func _report_movement() -> void:
 
 	_check(moved > 0, "no fish moved in %.0fs" % RUN_SECONDS)
 	_check(escaped == 0, "%d fish escaped the tank bounds" % escaped)
-	_check(_tank.population() < 12, "shark ate nothing: population still %d" % _tank.population())
+	# Breeding can add fish during the run, so count the eaten directly rather than
+	# inferring predation from the population falling.
+	_check(_eaten > 0, "shark ate nothing in %.0fs" % RUN_SECONDS)
 	print("moved %d, escaped %d, survivors %d" % [moved, escaped, _tank.population()])
 
 func _report_pause() -> void:
 	var drifted := 0
-	for fish: Fish in _tank.get_node("FishLayer").get_children():
+	for fish in _tank.fish():
 		if _paused_at.has(fish) and fish.global_position.distance_to(_paused_at[fish]) > 0.01:
 			drifted += 1
 	_check(drifted == 0, "%d fish moved while the tank was paused" % drifted)

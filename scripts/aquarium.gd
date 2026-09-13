@@ -11,6 +11,8 @@ extends Node2D
 ## they swim to the edge of the tank, and the screen moves independently.
 
 signal population_changed(count: int)
+signal fish_born(species: FishSpecies)
+signal fish_died(species: FishSpecies, of_old_age: bool)
 signal species_selected(species: FishSpecies)
 signal paused_changed(paused: bool)
 
@@ -83,6 +85,54 @@ func _process(delta: float) -> void:
 		_hash.insert(fish)
 	for fish in _fish:
 		fish.tick(step, _hash)
+	_reap()
+	_breed()
+
+## Removes fish that have outlived their species' lifespan.
+##
+## Iterates a copy: _on_fish_eaten mutates _fish, and the eaten path and this one can
+## both fire in a frame.
+func _reap() -> void:
+	for fish in _fish.duplicate():
+		if fish.is_past_lifespan():
+			_remove(fish, true)
+
+## Pairs adults of the same species and spawns one offspring per pair.
+##
+## Both parents go on cooldown, so a crowd cannot spawn a fish per frame, and each
+## species stops at its own carrying capacity. Without this the tank only ever loses
+## fish: a shark eats and nothing replaces the prey, so every tank trends to zero.
+func _breed() -> void:
+	var counts: Dictionary = {}
+	for fish in _fish:
+		counts[fish.species] = int(counts.get(fish.species, 0)) + 1
+
+	var paired: Dictionary = {}
+	for fish in _fish:
+		if not fish.can_breed() or paired.has(fish):
+			continue
+		if int(counts.get(fish.species, 0)) >= fish.species.capacity or _fish.size() >= MAX_POPULATION:
+			continue
+		var mate := _find_mate(fish, paired)
+		if mate == null:
+			continue
+		paired[fish] = true
+		paired[mate] = true
+		fish.note_bred()
+		mate.note_bred()
+		var midpoint := (fish.global_position + mate.global_position) * 0.5
+		if spawn(fish.species, midpoint, 0.0) != null:
+			counts[fish.species] = int(counts.get(fish.species, 0)) + 1
+			fish_born.emit(fish.species)
+
+func _find_mate(fish: Fish, paired: Dictionary) -> Fish:
+	for other: Node2D in _hash.query_radius(fish.global_position, fish.species.breed_distance, fish):
+		var candidate := other as Fish
+		if candidate == null or paired.has(candidate):
+			continue
+		if candidate.species == fish.species and candidate.can_breed():
+			return candidate
+	return null
 
 ## The rect fish are confined to, in world coordinates.
 func bounds() -> Rect2:
@@ -90,7 +140,7 @@ func bounds() -> Rect2:
 
 ## Adds one fish of `species` at `position` (world coordinates). Returns null when
 ## the tank is full, the species is null, or the tank is not in the scene tree yet.
-func spawn(species: FishSpecies, position: Vector2) -> Fish:
+func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 	if not is_node_ready():
 		push_error("Aquarium.spawn() called before the tank entered the tree.")
 		return null
@@ -99,7 +149,7 @@ func spawn(species: FishSpecies, position: Vector2) -> Fish:
 
 	var fish: Fish = FISH_SCENE.instantiate()
 	var predators: Array[FishSpecies] = _predator_map.get(species, [] as Array[FishSpecies])
-	fish.configure(species, predators, _bounds)
+	fish.configure(species, predators, _bounds, age)
 	fish.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
 	fish.eaten.connect(_on_fish_eaten)
 
@@ -150,12 +200,17 @@ func clear_tank() -> void:
 	population_changed.emit(0)
 
 func _on_fish_eaten(fish: Fish) -> void:
+	_remove(fish, false)
+
+func _remove(fish: Fish, of_old_age: bool) -> void:
 	var index := _fish.find(fish)
 	if index == -1:
 		return
+	var species := fish.species
 	_fish.remove_at(index)
 	fish_layer.remove_child(fish)
 	fish.queue_free()
+	fish_died.emit(species, of_old_age)
 	population_changed.emit(_fish.size())
 
 ## Scales the backdrop to cover the tank without distorting it.
@@ -193,7 +248,8 @@ func restore(data: Dictionary) -> bool:
 		if species == null:
 			skipped += 1
 			continue
-		if spawn(species, Vector2(float(entry.get("x", 0)), float(entry.get("y", 0)))) != null:
+		var age := float(entry.get("age", -1))
+		if spawn(species, Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))), age) != null:
 			restored += 1
 
 	var selected: FishSpecies = by_path.get(data.get("selected", ""), null)
@@ -202,7 +258,60 @@ func restore(data: Dictionary) -> bool:
 
 	if skipped > 0:
 		push_warning("Restored %d fish; skipped %d whose species is no longer present." % [restored, skipped])
+	if restored > 0:
+		_apply_time_away(Offline.elapsed_since(
+			int(data.get("saved_at", 0)), int(Time.get_unix_time_from_system())))
 	return restored > 0
+
+## Credits the tank for time the app was not running: fish age, the old die, and each
+## breeding species grows toward its capacity. See scripts/systems/offline.gd for why
+## this is a population model rather than a fast-forwarded simulation.
+func _apply_time_away(seconds: float) -> void:
+	if seconds <= 0.0:
+		return
+
+	# Breeding is applied BEFORE ageing, from the population that was actually alive
+	# during the absence. Done the other way round, a long absence kills every adult of
+	# old age first and then grows a species from zero — which returns zero, because
+	# nothing breeds from an empty tank. A species would go permanently extinct purely
+	# by the order of two loops.
+	var counts: Dictionary = {}
+	for fish in _fish:
+		counts[fish.species] = int(counts.get(fish.species, 0)) + 1
+
+	var born := 0
+	for species in available_species:
+		# breed_distance is what disables breeding in the live tank, so it has to mean
+		# the same thing here. Without this check sharks, which never pair in the tank,
+		# multiplied to their capacity every time the app was reopened.
+		if species.breed_distance <= 0.0:
+			continue
+		var before := int(counts.get(species, 0))
+		var after := Offline.project(
+			before, species.capacity, Offline.growth_rate(species.breed_cooldown), seconds)
+		for i in (after - before):
+			# Newborns, not adults: an absence leaves juveniles growing, and being born
+			# at age zero is also what keeps them from being reaped by the ageing below.
+			if spawn(species, _random_point(), 0.0) != null:
+				born += 1
+
+	var died := 0
+	for fish in _fish.duplicate():
+		if fish.age == 0.0:
+			continue  # born during the absence
+		fish.age += seconds
+		if fish.is_past_lifespan():
+			_remove(fish, true)
+			died += 1
+
+	if born > 0 or died > 0:
+		print("Away %d min: %d born, %d died of old age, %d fish now."
+			% [int(seconds / 60.0), born, died, _fish.size()])
+
+func _random_point() -> Vector2:
+	return Vector2(
+		randf_range(_bounds.position.x, _bounds.end.x),
+		randf_range(_bounds.position.y, _bounds.end.y))
 
 ## Writes the tank to disk. Safe to call at any time.
 func save() -> Error:
@@ -210,11 +319,8 @@ func save() -> Error:
 
 func _seed_starting_population() -> void:
 	for species in available_species:
-		for i in 3:
-			spawn(species, Vector2(
-				randf_range(0.0, tank_size.x),
-				randf_range(0.0, tank_size.y),
-			))
+		for i in species.starting_count:
+			spawn(species, _random_point())
 
 ## Inverts every species' `eats` list so each species knows what hunts it.
 ## The Go original stored both directions by hand and they could disagree.

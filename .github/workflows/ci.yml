@@ -42,10 +42,21 @@ jobs:
           godot --headless --import
 
       # `godot --script` exits 0 even on a script parse error — measured, not assumed —
-      # so a broken test file would sail through CI. The test prints exactly one RESULT
+      # so a broken test file would sail through CI. Each test prints exactly one RESULT
       # line; requiring it to say PASS is what actually gates the build.
-      - name: Smoke test
+      - name: Tests
         run: |
           set -euo pipefail
-          godot --headless --script res://test/smoke_test.gd 2>&1 | tee output.txt
-          grep -qx 'RESULT: PASS' output.txt
+          failed=0
+          for test in smoke offline offline_restore ecosystem; do
+            echo "::group::$test"
+            godot --headless --script "res://test/${test}_test.gd" 2>&1 | tee "$test.log"
+            if grep -qx 'RESULT: PASS' "$test.log"; then
+              echo "$test: PASS"
+            else
+              echo "$test: FAIL"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $failed

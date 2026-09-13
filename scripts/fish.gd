@@ -21,6 +21,10 @@ const PITCH_LIMIT: float = 22.0
 
 var species: FishSpecies
 var behaviour: Behaviour = Behaviour.WANDER
+## Seconds lived. Drives size, breeding eligibility and death of old age.
+var age: float = 0.0
+
+var _breed_timer: float = 0.0
 
 var _predators: Array[FishSpecies] = []
 var _target: Vector2 = Vector2.ZERO
@@ -31,11 +35,17 @@ var _is_eaten: bool = false
 
 ## Called by Aquarium immediately after instantiation, before the node enters
 ## the tree. `predators` is the derived reverse of every species' `eats` list.
-func configure(fish_species: FishSpecies, predators: Array[FishSpecies], bounds: Rect2) -> void:
+func configure(fish_species: FishSpecies, predators: Array[FishSpecies], bounds: Rect2,
+		start_age: float = -1.0) -> void:
 	species = fish_species
 	_predators = predators
 	_bounds = bounds
 	_target = _random_point()
+	# Seeded and restored fish arrive as adults of assorted ages; only a fish born in
+	# the tank starts at zero, so a fresh tank is not a shoal of identical juveniles
+	# that all mature and breed on the same frame.
+	age = start_age if start_age >= 0.0 else randf_range(species.maturity, species.maturity * 2.0)
+	_breed_timer = species.breed_cooldown
 
 func _ready() -> void:
 	if species == null:
@@ -52,6 +62,10 @@ func set_bounds(bounds: Rect2) -> void:
 func tick(delta: float, hash: SpatialHash) -> void:
 	if _is_eaten:
 		return
+
+	age += delta
+	_breed_timer = maxf(0.0, _breed_timer - delta)
+	_apply_size()
 
 	var heading := _decide_heading(hash)
 	if heading != Vector2.ZERO:
@@ -101,6 +115,25 @@ func _nearest_of(neighbours: Array[Node2D], wanted: Array[FishSpecies]) -> Fish:
 			best = other
 	return best
 
+## A fish is grown at `maturity` and no smaller than a third of adult size at birth.
+func growth() -> float:
+	if species.maturity <= 0.0:
+		return 1.0
+	return clampf(0.34 + 0.66 * (age / species.maturity), 0.34, 1.0)
+
+func is_mature() -> bool:
+	return age >= species.maturity
+
+## Whether this fish could pair right now, ignoring whether a partner is nearby.
+func can_breed() -> bool:
+	return (not _is_eaten) and species.breed_distance > 0.0 and is_mature() and _breed_timer <= 0.0
+
+func note_bred() -> void:
+	_breed_timer = species.breed_cooldown
+
+func is_past_lifespan() -> bool:
+	return species.lifespan > 0.0 and age > species.lifespan
+
 func be_eaten() -> void:
 	if _is_eaten:
 		return
@@ -127,10 +160,12 @@ func _face(heading: Vector2, delta: float) -> void:
 	sprite.rotation = rotate_toward(sprite.rotation, desired, deg_to_rad(TURN_RATE) * delta)
 
 func _apply_size() -> void:
+	if sprite.texture == null:
+		return
 	var texture_size := sprite.texture.get_size()
 	if texture_size.y <= 0.0:
 		return
-	var scale_factor := species.size / texture_size.y
+	var scale_factor := species.size * growth() / texture_size.y
 	sprite.scale = Vector2(scale_factor, scale_factor)
 
 func _clamp_to_bounds(point: Vector2) -> Vector2:

@@ -25,6 +25,7 @@ static func capture(tank: Aquarium) -> Dictionary:
 			"species": f.species.resource_path,
 			"x": roundi(f.global_position.x),
 			"y": roundi(f.global_position.y),
+			"age": roundi(f.age),
 		})
 	return {
 		"version": FORMAT_VERSION,

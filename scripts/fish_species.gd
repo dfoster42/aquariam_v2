@@ -19,6 +19,23 @@ extends Resource
 ## Radius in pixels within which this species notices predators and prey.
 @export_range(0.0, 1000.0, 1.0) var sight: float = 100.0
 
+@export_group("Life cycle")
+## Seconds from birth to death of old age. 0 means the species does not age out.
+@export_range(0.0, 3600.0, 5.0) var lifespan: float = 0.0
+## Seconds before a fish can breed. Also the age at which it reaches full size.
+@export_range(0.0, 600.0, 1.0) var maturity: float = 45.0
+## Seconds a parent must wait between spawnings.
+@export_range(1.0, 600.0, 1.0) var breed_cooldown: float = 40.0
+## How close two mature adults must be to pair. 0 disables breeding entirely,
+## which is how a predator is kept from multiplying without being fed.
+@export_range(0.0, 400.0, 5.0) var breed_distance: float = 0.0
+## Carrying capacity for this species. Breeding stops at the cap; the tank does not.
+@export_range(0, 500, 1) var capacity: int = 40
+## How many of this species a fresh tank opens with. Seeding an equal number of every
+## species gives a new tank as many sharks as clownfish, and the prey are eaten before
+## any of them can pair.
+@export_range(0, 100, 1) var starting_count: int = 3
+
 @export_group("Diet")
 ## Species this fish hunts. The reverse (who hunts this fish) is derived at
 ## runtime by Aquarium, so predator/prey never fall out of sync.
