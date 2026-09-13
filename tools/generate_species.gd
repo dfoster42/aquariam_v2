@@ -10,12 +10,17 @@ extends SceneTree
 ## against a 15-minute test. An absence is measured in hours, and a fish that lives seven
 ## minutes means every adult is dead before the app is next opened.
 ##
+## Prey see further than the shark does (240 and 230 against 150). That is the lever
+## that makes the tank survive a predator which actually connects: prey break for open
+## water before the shark has even registered them, so a catch takes a long pursuit or a
+## cornering against the glass rather than being the default outcome of proximity.
+##
 ## Capacities are set for what looks right on a phone, not for what the engine can carry:
 ## the tank fills to the sum of the prey capacities within a few minutes and holds there,
 ## so those numbers are the population the player actually sees.
 
 func _initialize() -> void:
-	var clownfish := _make("Clownfish", "res://assets/textures/clownfish.png", 80.0, 36.0, 140.0)
+	var clownfish := _make("Clownfish", "res://assets/textures/clownfish.png", 80.0, 36.0, 240.0)
 	clownfish.maturity = 25.0
 	clownfish.breed_cooldown = 22.0
 	clownfish.breed_distance = 170.0
@@ -24,7 +29,7 @@ func _initialize() -> void:
 	clownfish.lifespan = 1800.0
 	_save(clownfish, "clownfish")
 
-	var anemonefish := _make("Anemonefish", "res://assets/textures/anemonefish.png", 72.0, 44.0, 130.0)
+	var anemonefish := _make("Anemonefish", "res://assets/textures/anemonefish.png", 74.0, 44.0, 230.0)
 	anemonefish.maturity = 30.0
 	anemonefish.breed_cooldown = 26.0
 	anemonefish.breed_distance = 170.0
@@ -36,7 +41,10 @@ func _initialize() -> void:
 	# breed_distance 0: sharks never pair. A predator that breeds on the same terms as
 	# its prey overruns the tank, and arriving only by tap keeps the player in charge
 	# of how much pressure the tank is under.
-	var shark := _make("Shark", "res://assets/textures/shark.png", 95.0, 90.0, 200.0)
+	# Slower and shorter-sighted than the first pass. Once hunting steered the shark's
+	# mouth onto its prey rather than its centre, the same numbers took the tank from
+	# 16 fish to 3: a predator that actually connects needs far less of an edge.
+	var shark := _make("Shark", "res://assets/textures/shark.png", 86.0, 90.0, 150.0)
 	shark.maturity = 40.0
 	shark.breed_distance = 0.0
 	shark.capacity = 8

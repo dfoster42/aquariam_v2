@@ -16,6 +16,15 @@ func _ready() -> void:
 	get_tree().auto_accept_quit = false
 
 func _notification(what: int) -> void:
+	var names := {
+		NOTIFICATION_WM_CLOSE_REQUEST: "WM_CLOSE_REQUEST",
+		NOTIFICATION_WM_GO_BACK_REQUEST: "WM_GO_BACK_REQUEST",
+		NOTIFICATION_WM_WINDOW_FOCUS_OUT: "WM_WINDOW_FOCUS_OUT",
+		NOTIFICATION_APPLICATION_PAUSED: "APPLICATION_PAUSED",
+		NOTIFICATION_APPLICATION_FOCUS_OUT: "APPLICATION_FOCUS_OUT",
+	}
+	if names.has(what):
+		print("[lifecycle] %s" % names[what])
 	match what:
 		NOTIFICATION_WM_CLOSE_REQUEST:
 			aquarium.save()

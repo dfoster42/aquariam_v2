@@ -46,6 +46,46 @@ A tap and a drag share one finger, so a press stays provisional until it either 
 past `DRAG_SLOP` or is released still enough and soon enough to count as a tap. Only the
 release spawns.
 
+## Life cycle
+
+Fish age. Age drives size, so juveniles are visibly smaller, and it drives breeding and
+death. Two mature adults of a species within its `breed_distance` produce one offspring
+and both go on cooldown, capped by a per-species carrying capacity. Sharks have
+`breed_distance` 0 and never pair, so predation pressure is something the player adds by
+tapping rather than something that compounds on its own.
+
+Prey see much further than the shark does (240 and 230 against 150). That is the lever
+that keeps the tank alive against a predator that actually connects: prey break for open
+water before the shark has registered them, so a catch takes a long pursuit or a
+cornering against the glass. `test/ecosystem_test.gd` is what tuned these numbers.
+
+A predator bites with its **mouth**, not its centre. Measured centre to centre, prey were
+only caught once they had reached the middle of the shark — its sprite is ~213px long, so
+the mouth sits ~106px ahead of the point being measured. Hunting also steers the mouth
+onto the prey rather than the centre, because aiming the centre makes the mouth sweep
+past on a tangent.
+
+A fish's facing is tracked separately from its sprite. `flip_h` snaps the instant a
+heading crosses vertical while `rotation` eases, so a mouth derived from sprite state
+teleported a body length sideways and sharks could bite prey behind their own tails.
+
+## Offline progression
+
+The tank is credited for time the app was closed, as a population model rather than a
+fast-forwarded simulation — see `scripts/systems/offline.gd` for why. Absences are capped
+at 8 hours and guarded against a clock that moved backwards.
+
+A long absence is a generational turnover: the target population is computed from who was
+alive during the absence, the old are reaped, and the shortfall is made up by their
+descendants with ages spread across the run-up to maturity. Done in the other order, a
+three-hour absence returned a tank containing one immortal shark.
+
+**Saving does not rely on being told the app is closing.** On iOS, backgrounding produced
+no `NOTIFICATION_APPLICATION_PAUSED` at the node and wrote no save — measured on an
+iPhone 17 Pro simulator, with the platform log confirming the scene had backgrounded. A
+mobile OS can also kill a suspended app outright. `autosave_interval` (15s) is the
+mechanism; the lifecycle hooks are a bonus.
+
 ## Tests
 
 A headless functional check of spawning, movement, tank bounds and predation:
@@ -54,8 +94,19 @@ A headless functional check of spawning, movement, tank bounds and predation:
 godot --headless --script res://test/smoke_test.gd
 ```
 
-It covers spawning, movement, tank bounds, predation, pause, species selection,
-tap-to-spawn, and the safe-area inset arithmetic.
+Five files, all run by CI:
+
+| test | covers |
+| --- | --- |
+| `smoke_test` | spawning, movement, bounds, predation, pause, selection, tap-to-spawn, safe-area insets, save/restore round trip |
+| `bite_test` | a predator catches with its mouth, not its centre or its tail |
+| `offline_test` | the offline population model in isolation |
+| `offline_restore_test` | a real absence, including one longer than any fish lives |
+| `ecosystem_test` | 15 simulated minutes; the tank must neither die out nor run away |
+
+Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each
+writing to the same save made the suite flaky — a run would fail three checks and then
+pass unchanged on the next invocation.
 
 CI runs it on every push and pull request. Note that `godot --script` exits **0** on a
 script parse error — measured, not assumed — so a broken test file would otherwise pass

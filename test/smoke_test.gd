@@ -31,6 +31,10 @@ func _initialize() -> void:
 ## only live once the scene is actually inside the running tree.
 func _begin() -> void:
 	_tank = _main.get_node("Aquarium")
+	# Autosave off for every tank a test creates. Several tanks live at once here, and
+	# each one writing to the same user://tank.json mid-test made this file flaky:
+	# a run would fail three checks and then pass unchanged on the next invocation.
+	_tank.autosave_interval = 0.0
 	_camera = _main.get_node("CameraRig")
 	_ui = _main.get_node("UI")
 	_tank.fish_died.connect(func(_s: FishSpecies, old: bool) -> void:
@@ -134,6 +138,7 @@ func _check_persistence() -> void:
 
 	# Restore into a second tank and compare.
 	var other: Aquarium = load("res://scenes/aquarium.tscn").instantiate()
+	other.autosave_interval = 0.0
 	root.add_child(other)
 	other.clear_tank()
 	_check(other.restore(data), "restore() reported nothing restored")
@@ -157,6 +162,7 @@ func _check_persistence() -> void:
 	salted["fish"] = (salted["fish"] as Array).duplicate(true)
 	(salted["fish"] as Array).append({"species": "res://resources/species/ghost.tres", "x": 10, "y": 10})
 	var third: Aquarium = load("res://scenes/aquarium.tscn").instantiate()
+	third.autosave_interval = 0.0
 	root.add_child(third)
 	third.clear_tank()
 	_check(third.restore(salted), "restore() gave up because of one unknown species")

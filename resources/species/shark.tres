@@ -9,9 +9,9 @@
 script = ExtResource("1_ueko5")
 display_name = "Shark"
 texture = ExtResource("4_1jvpi")
-speed = 95.0
+speed = 86.0
 size = 90.0
-sight = 200.0
+sight = 150.0
 maturity = 40.0
 capacity = 8
 starting_count = 1

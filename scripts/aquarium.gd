@@ -30,6 +30,15 @@ const MAX_POPULATION: int = 1500
 ## that panning has somewhere to go.
 @export var tank_size: Vector2 = Vector2(1080, 1920)
 
+## Seconds between automatic saves. 0 disables them.
+##
+## The tank cannot rely on being told it is closing. On iOS, backgrounding the app
+## produced no NOTIFICATION_APPLICATION_PAUSED at this node and no save was written —
+## measured on an iPhone 17 Pro simulator, with the platform's own log confirming the
+## scene had backgrounded. A mobile OS can also kill a suspended app outright with no
+## callback at all, so a lifecycle hook is at best a bonus and autosave is the mechanism.
+@export var autosave_interval: float = 15.0
+
 ## Multiplied into the backdrop. White now that the backdrop is drawn to sit under
 ## the fish rather than compete with them — it was a stopgap that dimmed the
 ## photograph this replaced, and applying it to the drawn backdrop would crush it.
@@ -42,6 +51,7 @@ var _predator_map: Dictionary = {}
 var _hash: SpatialHash
 var _bounds: Rect2 = Rect2()
 var _paused: bool = false
+var _since_autosave: float = 0.0
 
 @onready var background: Sprite2D = $Background
 @onready var fish_layer: Node2D = $FishLayer
@@ -87,6 +97,12 @@ func _process(delta: float) -> void:
 		fish.tick(step, _hash)
 	_reap()
 	_breed()
+
+	if autosave_interval > 0.0:
+		_since_autosave += delta
+		if _since_autosave >= autosave_interval:
+			_since_autosave = 0.0
+			save()
 
 ## Removes fish that have outlived their species' lifespan.
 ##
@@ -270,39 +286,46 @@ func _apply_time_away(seconds: float) -> void:
 	if seconds <= 0.0:
 		return
 
-	# Breeding is applied BEFORE ageing, from the population that was actually alive
-	# during the absence. Done the other way round, a long absence kills every adult of
-	# old age first and then grows a species from zero — which returns zero, because
-	# nothing breeds from an empty tank. A species would go permanently extinct purely
-	# by the order of two loops.
-	var counts: Dictionary = {}
-	for fish in _fish:
-		counts[fish.species] = int(counts.get(fish.species, 0)) + 1
-
-	var born := 0
+	# A long absence is a generational turnover, not a mass extinction. The first
+	# version grew each species to capacity and then aged every adult past its
+	# lifespan, so three hours away returned a tank containing one immortal shark:
+	# the survivors had been computed before the deaths were applied, and nothing
+	# replaced them.
+	#
+	# So the target population is computed from who was alive during the absence, the
+	# old are then reaped, and the shortfall is made up by their descendants.
+	var targets: Dictionary = {}
 	for species in available_species:
-		# breed_distance is what disables breeding in the live tank, so it has to mean
-		# the same thing here. Without this check sharks, which never pair in the tank,
-		# multiplied to their capacity every time the app was reopened.
+		targets[species] = 0
+	for fish in _fish:
+		targets[fish.species] = int(targets.get(fish.species, 0)) + 1
+	for species in available_species:
 		if species.breed_distance <= 0.0:
 			continue
-		var before := int(counts.get(species, 0))
-		var after := Offline.project(
-			before, species.capacity, Offline.growth_rate(species.breed_cooldown), seconds)
-		for i in (after - before):
-			# Newborns, not adults: an absence leaves juveniles growing, and being born
-			# at age zero is also what keeps them from being reaped by the ageing below.
-			if spawn(species, _random_point(), 0.0) != null:
-				born += 1
+		targets[species] = Offline.project(
+			int(targets[species]), species.capacity,
+			Offline.growth_rate(species.breed_cooldown), seconds)
 
 	var died := 0
 	for fish in _fish.duplicate():
-		if fish.age == 0.0:
-			continue  # born during the absence
 		fish.age += seconds
 		if fish.is_past_lifespan():
 			_remove(fish, true)
 			died += 1
+
+	var alive: Dictionary = {}
+	for fish in _fish:
+		alive[fish.species] = int(alive.get(fish.species, 0)) + 1
+
+	var born := 0
+	for species in available_species:
+		var shortfall := int(targets.get(species, 0)) - int(alive.get(species, 0))
+		for i in shortfall:
+			# Descendants, with ages spread across the run-up to maturity so the tank
+			# comes back as a mixed generation rather than a synchronised cohort that
+			# would all mature, breed and die on the same frame.
+			if spawn(species, _random_point(), randf_range(0.0, species.maturity * 1.5)) != null:
+				born += 1
 
 	if born > 0 or died > 0:
 		print("Away %d min: %d born, %d died of old age, %d fish now."

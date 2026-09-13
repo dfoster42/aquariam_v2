@@ -10,7 +10,13 @@ signal eaten(fish: Fish)
 enum Behaviour { WANDER, HUNT, FLEE }
 
 const ARRIVE_DISTANCE: float = 24.0
-const BITE_DISTANCE: float = 14.0
+## How close a predator's MOUTH must come to prey to eat it — not its centre.
+##
+## Measured centre to centre, a shark only registered a catch once the prey had reached
+## the middle of its body: the sprite is around 213px long at its shipped size, so its
+## mouth is ~106px ahead of the point the distance was being taken from, and prey
+## visibly swam into the shark before anything happened.
+const BITE_DISTANCE: float = 16.0
 ## Degrees per second the sprite rotates toward its heading.
 const TURN_RATE: float = 360.0
 ## How far from level a fish is allowed to look, in degrees. Headings are drawn from
@@ -25,6 +31,14 @@ var behaviour: Behaviour = Behaviour.WANDER
 var age: float = 0.0
 
 var _breed_timer: float = 0.0
+
+## The direction the fish is actually pointing, turned smoothly toward its heading.
+##
+## Kept separately from the sprite because the sprite's own state is discontinuous:
+## flip_h snaps the instant a heading crosses vertical while rotation eases, so a mouth
+## derived from the sprite teleported a full body length across the fish. A shark could
+## then "bite" prey that was behind its tail.
+var _facing: Vector2 = Vector2.LEFT
 
 var _predators: Array[FishSpecies] = []
 var _target: Vector2 = Vector2.ZERO
@@ -46,6 +60,7 @@ func configure(fish_species: FishSpecies, predators: Array[FishSpecies], bounds:
 	# that all mature and breed on the same frame.
 	age = start_age if start_age >= 0.0 else randf_range(species.maturity, species.maturity * 2.0)
 	_breed_timer = species.breed_cooldown
+	_facing = Vector2.from_angle(randf_range(-PI, PI))
 
 func _ready() -> void:
 	if species == null:
@@ -84,14 +99,21 @@ func _decide_heading(hash: SpatialHash) -> Vector2:
 
 	var nearest_prey: Fish = _nearest_of(neighbours, species.eats)
 	if nearest_prey != null:
-		var gap := global_position.distance_to(nearest_prey.global_position)
-		if gap <= BITE_DISTANCE:
+		# Mouth to the prey's body, so a catch happens where it looks like one.
+		var reach := BITE_DISTANCE + nearest_prey.half_length()
+		if mouth_position().distance_to(nearest_prey.global_position) <= reach:
 			nearest_prey.be_eaten()
 			behaviour = Behaviour.WANDER
 			_target = _random_point()
 			return Vector2.ZERO
 		behaviour = Behaviour.HUNT
-		return global_position.direction_to(nearest_prey.global_position)
+		# Steer so the MOUTH converges on the prey, not the centre. Aiming the centre
+		# at prey means the mouth — half a body length ahead — sweeps past it on a
+		# tangent and never closes: a lone chase then hung on a 0.2px margin, and in a
+		# crowded tank, where the nearest target changes frame to frame, sharks stopped
+		# catching anything at all.
+		var aim := nearest_prey.global_position - facing() * half_length()
+		return global_position.direction_to(aim)
 
 	behaviour = Behaviour.WANDER
 	if global_position.distance_to(_target) < ARRIVE_DISTANCE:
@@ -114,6 +136,21 @@ func _nearest_of(neighbours: Array[Node2D], wanted: Array[FishSpecies]) -> Fish:
 			best_distance_sq = d
 			best = other
 	return best
+
+## Half the fish's drawn length, in world units. Accounts for growth, since a juvenile
+## is drawn smaller and should have a correspondingly shorter reach.
+func half_length() -> float:
+	if sprite == null or sprite.texture == null:
+		return 0.0
+	return sprite.texture.get_size().x * absf(sprite.scale.x) * 0.5
+
+## The direction the fish is pointing, in world space. Continuous by construction.
+func facing() -> Vector2:
+	return _facing
+
+## World position of the fish's mouth: the front of the drawn sprite.
+func mouth_position() -> Vector2:
+	return global_position + facing() * half_length()
 
 ## A fish is grown at `maturity` and no smaller than a third of adult size at birth.
 func growth() -> float:
@@ -150,14 +187,16 @@ func is_eaten() -> bool:
 ## fixes that for the whole catalogue — so it is a fish swimming RIGHT that needs
 ## mirroring, not one swimming left.
 func _face(heading: Vector2, delta: float) -> void:
-	var desired := heading.angle()
-	var facing_left := absf(wrapf(desired, -PI, PI)) > PI / 2.0
-	if facing_left:
-		desired = wrapf(desired + PI, -PI, PI)
+	# Turn the true facing first, at a bounded rate, then derive the sprite from it.
+	var max_turn := deg_to_rad(TURN_RATE) * delta
+	_facing = _facing.rotated(clampf(_facing.angle_to(heading), -max_turn, max_turn)).normalized()
+
+	var angle := _facing.angle()
+	var facing_left := absf(wrapf(angle, -PI, PI)) > PI / 2.0
 	sprite.flip_h = not facing_left
+	var desired := wrapf(angle + PI, -PI, PI) if facing_left else angle
 	var limit := deg_to_rad(PITCH_LIMIT)
-	desired = clampf(desired, -limit, limit)
-	sprite.rotation = rotate_toward(sprite.rotation, desired, deg_to_rad(TURN_RATE) * delta)
+	sprite.rotation = clampf(desired, -limit, limit)
 
 func _apply_size() -> void:
 	if sprite.texture == null:

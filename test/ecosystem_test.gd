@@ -27,6 +27,7 @@ var _natural_deaths: int = 0
 func _initialize() -> void:
 	TankStore.clear()
 	var main: Node2D = load("res://scenes/main.tscn").instantiate()
+	main.get_node("Aquarium").autosave_interval = 0.0
 	root.add_child(main)
 	_tank = main.get_node("Aquarium")
 
@@ -70,6 +71,13 @@ func _run() -> void:
 	print("population low %d, high %d, final %d" % [lowest, highest, _tank.population()])
 
 	_check(lowest > 0, "the tank died out (population reached 0)")
+	# "Did not reach zero" is too weak a bar: a tank that craters to three fish and
+	# stays there is a failed ecosystem even though nothing hit zero.
+	var seeded := 0
+	for species: FishSpecies in _tank.available_species:
+		seeded += species.starting_count
+	_check(_tank.population() >= seeded / 2,
+		"population collapsed to %d, below half the %d it started with" % [_tank.population(), seeded])
 	_check(_count_prey() > 0, "all prey were eaten; the tank cannot recover")
 	_check(_tank.population() < Aquarium.MAX_POPULATION,
 		"population ran away to the hard cap (%d)" % _tank.population())
