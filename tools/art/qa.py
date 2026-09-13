@@ -125,9 +125,24 @@ Each item's value is an object: {{"verdict": "pass"|"fail", "why": "<one sentenc
 """
 
 
-def flatten(path: Path) -> Image.Image:
+# Transparent margin added around a sprite before judging, as a fraction of its height.
+#
+# Sprites ship trimmed to their bounding box, so every extremity touches the frame by
+# construction — and the judge reads that as "sliced off flat by the image boundary" and
+# fails `nothing_cut`. The crop was creating the defect it was being asked about. Padding
+# does not hide real clipping: genuinely amputated art reads as a flat edge with empty
+# space beyond it, which is more obvious here, not less.
+JUDGE_MARGIN = 0.12
+
+
+def flatten(path: Path, margin: float = 0.0) -> Image.Image:
     """The sprite as the game draws it: composited over the tank, not over white."""
     sprite = Image.open(path).convert("RGBA")
+    pad = round(sprite.height * margin)
+    if pad:
+        padded = Image.new("RGBA", (sprite.width + pad * 2, sprite.height + pad * 2), (0, 0, 0, 0))
+        padded.paste(sprite, (pad, pad))
+        sprite = padded
     flat = Image.new("RGB", sprite.size, GROUND)
     flat.paste(sprite, (0, 0), sprite)
     return flat
@@ -258,7 +273,10 @@ def check_image(
     """Grade one image. Returns (passed, failing item keys)."""
     with tempfile.TemporaryDirectory(prefix="aquarium-qa-") as tmp:
         preview = 320 if kind == "background" else sprite_px
-        full, small = write_pair(flatten(path), Path(tmp), name, preview)
+        # A backdrop is full-bleed by definition and must not be padded, or it fails
+        # its own `full_bleed` item.
+        margin = 0.0 if kind == "background" else JUDGE_MARGIN
+        full, small = write_pair(flatten(path, margin), Path(tmp), name, preview)
         verdict, output = judge(full, small, model, timeout, samples, kind)
     if raw:
         print(f"--- {name} raw ---\n{output}\n--- end ---")

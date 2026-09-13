@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ccv1xwx1xpv0"
-path="res://.godot/imported/nemo.png-9869af5699859a3c5b72aacbf10eb9ec.ctex"
+uid="uid://4ad6e2ove48a"
+path="res://.godot/imported/anemonefish.png-147728a41cbe71efab9c0cdaaba040aa.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/textures/nemo.png"
-dest_files=["res://.godot/imported/nemo.png-9869af5699859a3c5b72aacbf10eb9ec.ctex"]
+source_file="res://assets/textures/anemonefish.png"
+dest_files=["res://.godot/imported/anemonefish.png-147728a41cbe71efab9c0cdaaba040aa.ctex"]
 
 [params]
 

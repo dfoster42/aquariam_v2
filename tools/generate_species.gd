@@ -6,7 +6,7 @@ func _initialize() -> void:
 	var clownfish := _make("Clownfish", "res://assets/textures/clownfish.png", 55.0, 36.0, 140.0)
 	_save(clownfish, "clownfish")
 
-	var anemonefish := _make("Anemonefish", "res://assets/textures/nemo.png", 48.0, 44.0, 130.0)
+	var anemonefish := _make("Anemonefish", "res://assets/textures/anemonefish.png", 48.0, 44.0, 130.0)
 	_save(anemonefish, "anemonefish")
 
 	var shark := _make("Shark", "res://assets/textures/shark.png", 110.0, 90.0, 260.0)
