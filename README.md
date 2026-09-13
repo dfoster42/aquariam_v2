@@ -85,6 +85,33 @@ Concealment is computed once per frame for every fish, not per predator: a fish 
 hunters near it would otherwise test its surroundings ten times for the same answer.
 Decor never moves, so its spatial grid is rebuilt only when the set changes.
 
+Plants wave, and the simulation knows nothing about it. `shaders/sway.gdshader` bends
+each sprite by offsetting its texture lookup, scaled by height so the tips move and the
+base stays planted. A Sprite2D is a four-vertex quad, so displacing its corners would
+shear the whole sprite rather than bend it; sampling along a curve gives a real bend from
+the same quad.
+
+Each plant's phase comes from its own world position, read from `MODEL_MATRIX` in
+`vertex()`. That is what keeps it cheap: every plant shares **one** material, so they
+still batch, while no two sway together. A duplicated material per plant carrying a
+random phase would break batching for the same result.
+
+Measured with `tools/benchmark.gd -- --decor N` on an M5 Pro, vsync off:
+
+| plants | fish held at 60 fps |
+| ---: | ---: |
+| 0 | 901 |
+| 20 | 970 |
+| 80 | ~520 |
+
+The shader itself is free: at matched fish counts, sway on versus off measured 9.35 vs
+9.47 ms, 16.76 vs 15.91 ms and 24.64 vs 22.77 ms — inside the noise and the differing
+fish counts. What costs is 80 large sprites' worth of fill rate, not the waving. At a
+realistic 20 plants there is no measurable cost at all.
+
+Decor textures carry 10% transparent padding either side, because the shader samples
+past the sprite's edge at full lean and would otherwise clip the tips.
+
 Decor is saved with the tank, and restored *before* the fish, so a reloaded tank's
 shelter is in effect on the first frame rather than one frame late.
 

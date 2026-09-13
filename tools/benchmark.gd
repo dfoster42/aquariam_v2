@@ -11,6 +11,8 @@ extends SceneTree
 ## slower one, so the simulation can look cheap while the frame is already late.
 
 const STEPS: Array[int] = [50, 100, 200, 400, 800, 1200, 1500]
+## Plants placed before measuring. Pass with: godot --script ... -- --decor 60
+var _decor_count: int = 0
 const WARMUP_FRAMES: int = 30
 const SAMPLE_FRAMES: int = 90
 const BUDGET_MS: float = 1000.0 / 60.0
@@ -33,6 +35,8 @@ func _process(delta: float) -> bool:
 	if not _started:
 		_started = true
 		_tank = root.get_node("Main/Aquarium")
+		_read_args()
+		_place_decor()
 		_fill_to(STEPS[0])
 		return false
 
@@ -54,6 +58,30 @@ func _process(delta: float) -> bool:
 	_frames = 0
 	_samples.clear()
 	return false
+
+func _read_args() -> void:
+	var args := OS.get_cmdline_user_args()
+	for i in args.size():
+		if args[i] == "--decor" and i + 1 < args.size():
+			_decor_count = int(args[i + 1])
+
+func _place_decor() -> void:
+	if _decor_count <= 0 or _tank.available_decor.is_empty():
+		return
+	var bounds := _tank.bounds()
+	for i in _decor_count:
+		_tank.place_decor(
+			_tank.available_decor[i % _tank.available_decor.size()],
+			Vector2(randf_range(bounds.position.x, bounds.end.x),
+				randf_range(bounds.position.y, bounds.end.y)))
+	if "--no-sway" in OS.get_cmdline_user_args():
+		# Strip the shader but keep the sprites, to separate the cost of the sway from
+		# the cost of simply drawing this many more large things.
+		for item in _tank.decor():
+			item.sprite.material = null
+		print("placed %d plants (sway shader OFF)" % _tank.decor().size())
+	else:
+		print("placed %d plants" % _tank.decor().size())
 
 func _fill_to(target: int) -> void:
 	var species := _tank.available_species
@@ -82,7 +110,8 @@ func _record() -> void:
 	})
 
 func _report() -> void:
-	print("\n fish | mean ms | p95 ms | worst | fps@mean | physics ms | draws")
+	print("\nplants: %d" % _decor_count)
+	print(" fish | mean ms | p95 ms | worst | fps@mean | physics ms | draws")
 	print("------+---------+--------+-------+----------+------------+------")
 	var last_ok := 0
 	for r in _results:

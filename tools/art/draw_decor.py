@@ -21,6 +21,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 SUPERSAMPLE = 4
+# Transparent margin added either side, as a fraction of the drawn width. Must be at
+# least the shader's sway_strength or the plant's tips clip at full lean.
+SWAY_PADDING = 0.10
 INK = (14, 36, 34, 255)
 
 
@@ -108,7 +111,13 @@ def main() -> int:
 
     for name, image in (("kelp", kelp()), ("anemone", anemone())):
         path = args.out_dir / f"{name}.png"
-        image.crop(image.getbbox()).save(path, optimize=True)
+        trimmed = image.crop(image.getbbox())
+        # Horizontal padding for the sway shader to bend into. Without it the shader
+        # samples past the edge and the tips are clipped off at their widest lean.
+        pad = round(trimmed.width * SWAY_PADDING)
+        padded = Image.new("RGBA", (trimmed.width + pad * 2, trimmed.height), (0, 0, 0, 0))
+        padded.paste(trimmed, (pad, 0))
+        padded.save(path, optimize=True)
         final = Image.open(path)
         print(f"{path}  {final.width}x{final.height}  {path.stat().st_size / 1024:.0f} KB")
     return 0
