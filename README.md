@@ -79,14 +79,14 @@ the whole restore.
 | --- | --- |
 | Web | exports and runs; checked in a browser at 375x812 |
 | macOS | exports; universal `x86_64 arm64` |
+| iOS simulator | **works**, after patching the export template — see below |
 | iOS device | builds `arm64`; needs a paid Apple developer account to sign |
-| iOS simulator | **not possible** — see below |
 | Android | not attempted; needs a JDK and the Android SDK |
 
-### iOS simulator does not work, and will not
+### iOS simulator needs a patched export template
 
-Godot's official iOS export template ships a simulator slice that is x86_64 only, while
-its own metadata claims otherwise:
+Godot's official iOS template ships a simulator library that is x86_64 only, while its
+own xcframework metadata claims otherwise:
 
 ```
 libgodot.ios.debug.xcframework/Info.plist  -> SupportedArchitectures: [arm64, x86_64]
@@ -94,47 +94,67 @@ libgodot.ios.debug.xcframework/ios-arm64_x86_64-simulator/libgodot.a
   lipo -archs -> x86_64
 ```
 
-Apple-silicon simulators are arm64 and Xcode 26 no longer runs x86_64 simulator apps
-under Rosetta, so an x86_64 build links and then fails to install with "Failed to find
-matching arch".
+Apple-silicon simulators are arm64 and Xcode 26 dropped Rosetta for simulator apps, so a
+stock template builds an app that will not install: *"Failed to find matching arch"*.
+This is [godot#118161](https://github.com/godotengine/godot/issues/118161), and upstream
+intends to delete simulator support rather than fix it
+([PR #122365](https://github.com/godotengine/godot/pull/122365)), on the grounds that the
+simulator cannot do Metal.
 
-This is upstream and deliberate, not a local misconfiguration
-([godot#118161](https://github.com/godotengine/godot/issues/118161)). From a Godot
-maintainer on that thread: the template "doesn't include arm64 simulator binaries at
-all", the code that used to synthesise a simulator library from the device binary "was
-removed some time ago", and a simulator build "is almost useless in any case, since it
-does not support Metal in required capacity". The open PR that closes the issue is
-[#122365, "[iOS/visionOS] Remove simulator support"](https://github.com/godotengine/godot/pull/122365).
+**That reasoning does not apply to this project.** Godot's own `platform/ios/detect.py`
+turns Metal and Vulkan *off* for simulator builds and keeps GLES3:
 
-So `application/generate_simulator_library_if_missing` cannot help, and building the
-engine from source would only reproduce a simulator that cannot do Metal properly.
+```python
+if env["metal"] and env["simulator"]:
+    print_warning("iOS Simulator does not support the Metal rendering driver")
+    env["metal"] = False
+if env["vulkan"] and env["simulator"]:
+    ...
+if env["opengl3"]:
+    env.Append(CPPDEFINES=["GLES3_ENABLED", ...])
+```
 
-The issue title says 4.6.1 works; it does not. The reporter retracted that in the
-thread, and it was re-measured here against a clean 4.6.1 template.
+This project runs the Compatibility renderer, which *is* GLES3. OpenGL is not the
+obstacle here — it is the only renderer the simulator supports, and the arm64 slice is
+simply missing. Building it is enough:
 
-**What to do instead:** build for a device (the `ios-arm64` slice is genuinely arm64 and
-links fine — only signing is missing), or run it on an Apple-silicon Mac through Xcode's
-"Designed for [iPad,iPhone]" destination, which also builds cleanly here. Note that a
-locally built iOS binary cannot be launched from the shell: it carries `platform 2`
-(iOS), and `open` refuses it with "incorrect executable format". It has to be run from
-Xcode.
+```bash
+tools/patch_ios_simulator_template.sh      # ~4 min per target on 18 cores
+```
 
-`export_presets.cfg` carries `application/app_store_team_id="0000000000"`, a placeholder
-so the exporter will run at all. It is not a real team ID and must be replaced before
-any signed or distributed build.
+That clones the matching engine source, builds `libgodot.ios.template_{debug,release}.arm64.simulator.a`
+with `scons platform=ios arch=arm64 simulator=yes`, fuses each into the shipped x86_64
+slice with `lipo`, and repacks `ios.zip` in place. The stock template is preserved as
+`ios.zip.orig`, and the script is idempotent. Prerequisites: Xcode, and
+`python3 -m pip install scons`.
 
-### A renderer decision this raises
+Then:
 
-The project uses the Compatibility renderer (OpenGL ES / WebGL), chosen for device reach
-and because it is the only method that supports web export. The same maintainer notes
-that OpenGL on iOS "is deprecated for a long time... Apple can remove it in any iOS
-update or stop accepting apps using it."
+```bash
+godot --headless --export-debug "iOS" build/ios/Aquarium.xcodeproj
+cd build/ios && xcodebuild -project Aquarium.xcodeproj -scheme Aquarium \
+  -sdk iphonesimulator -configuration Debug -derivedDataPath dd \
+  -destination "id=<simulator udid>" CODE_SIGNING_ALLOWED=NO build
+xcrun simctl install <udid> dd/Build/Products/Debug-iphonesimulator/Aquarium.app
+```
 
-That does not affect web, desktop or Android, and nothing here has been rejected by
-anyone — but a serious iOS target probably wants
-`rendering/renderer/rendering_method.mobile="mobile"` (Metal) while web keeps
-`gl_compatibility`. Godot supports that split per platform. Not changed yet, because it
-cannot be tested without a device build.
+Verified on an iPhone 17 Pro simulator running iOS 26.5: the app launches, lays out
+under the Dynamic Island, tap-to-spawn works, and pause works.
+
+Two notes on the export preset. `application/targeted_device_family` uses Godot's enum
+where **0 is iPhone, 1 is iPad and 2 is both** — setting it to `1` expecting iPhone
+produces `TARGETED_DEVICE_FAMILY = "2"` and Xcode then offers no iPhone destinations at
+all. And `application/app_store_team_id="0000000000"` is a placeholder so the exporter
+will run; it is not a real team ID and must be replaced before any signed build.
+
+### A renderer note
+
+A Godot maintainer notes on that thread that OpenGL on iOS "is deprecated for a long
+time... Apple can remove it in any iOS update or stop accepting apps using it". That is
+worth knowing before shipping to the App Store, and a released iOS build probably wants
+`rendering/renderer/rendering_method.mobile="mobile"` (Metal) with web staying on
+`gl_compatibility` — but note that this would end simulator testing, since Metal is
+exactly what the simulator cannot do.
 
 ## Layout notes
 
