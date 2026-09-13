@@ -14,5 +14,5 @@ lifespan = 1800.0
 maturity = 25.0
 breed_cooldown = 22.0
 breed_distance = 170.0
-capacity = 18
-starting_count = 8
+capacity = 46
+starting_count = 20

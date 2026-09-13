@@ -26,9 +26,10 @@ const MAX_POPULATION: int = 1500
 ## res://...tres to .tres.remap and a filename scan would come back empty.
 @export var available_species: Array[FishSpecies] = []
 
-## The tank's size in world units, deliberately larger than a phone viewport so
-## that panning has somewhere to go.
-@export var tank_size: Vector2 = Vector2(1080, 1920)
+## The tank's size in world units — a map several screens wide, not one screen. The
+## camera shows a portrait slice of it and pans across; see tools/art/draw_background.py
+## for the terrain it is drawn against.
+@export var tank_size: Vector2 = Vector2(3240, 2160)
 
 ## Seconds between automatic saves. 0 disables them.
 ##

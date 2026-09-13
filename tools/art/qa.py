@@ -64,7 +64,13 @@ RUBRIC: tuple[tuple[str, str], ...] = (
 BACKGROUND_RUBRIC: tuple[tuple[str, str], ...] = (
     ("no_fish", "No fish anywhere in the scene. Fish are drawn on top at runtime; one painted in is a permanent duplicate."),
     ("muted", "The scene is low contrast and muted. Nothing in it is as bright or as saturated as a cartoon fish would be."),
-    ("open_middle", "The middle of the frame is open water, with scenery kept low and to the sides."),
+    # Was "the middle of the frame is open water, with scenery kept low and to the
+    # sides". That was right for a single-screen backdrop and wrong for a scrollable
+    # map, where varied terrain across the width is the entire point and a permanently
+    # empty middle would defeat it. The constraint that actually matters is unchanged:
+    # fish need open water to be seen against. Changed here, deliberately, rather than
+    # waved through with --force-qa.
+    ("open_water", "A substantial part of the frame is open water containing no scenery, so fish have somewhere to swim and be seen against. Scenery may rise into the middle; it must not fill the frame."),
     ("flat_vector", "Flat vector illustration with simple shapes and flat colour, not a photograph and not a painterly render."),
     ("full_bleed", "The scene fills the whole frame edge to edge, with no border, no frame, no letterboxing and no background showing behind it."),
     ("no_text", "No lettering, numerals, watermark or signature."),

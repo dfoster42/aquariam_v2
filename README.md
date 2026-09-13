@@ -209,8 +209,25 @@ exactly what the simulator cannot do.
 
 ## Layout notes
 
-The tank is a fixed world (`tank_size`), not the viewport. A camera looks at part of it,
-so fish swim to the edge of the *tank* while the view moves independently.
+The tank is a map — 3240x2160 world units, several screens wide — not the viewport. The
+camera shows a portrait slice and pans across it, so fish swim to the edge of the *map*
+while the view moves independently. On a portrait phone the camera frames roughly 37% of
+the map's width at its widest zoom.
+
+`tools/art/draw_background.py` draws the terrain: a sea floor built from layered sine
+waves with ravines carved into it, a hazier ridge behind, rocks bedded into the landform
+and stands of kelp reaching up through the water column.
+
+Three things that took a few passes:
+- Rocks must be darker than the floor they stand on, and the far ones drawn *before* the
+  near floor, or they read as pale slabs lying on top of the landscape.
+- A ravine needs darkness behind it. Cutting into the near floor simply revealed the
+  lighter far ridge, and the cuts drew as pale spikes.
+- Ravines need width and a smoothstep falloff. Narrow cuts with a squared falloff came
+  to a point and read as cracks, not canyons.
+
+Populations scale with the map: it is roughly 3.4x the area of the original
+single-screen tank, so the same on-screen density needs proportionally more fish.
 
 Every layout container in `ui.tscn` sets `mouse_filter = 2` (IGNORE). A `Control`
 defaults to STOP, and one full-rect container left at the default silently swallows

@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 """Draw the tank backdrop directly, without a generative model.
 
-The backdrop is flat scenery — graded water, a sand floor, rounded rocks and seaweed —
+The backdrop is flat scenery — graded water, a sculpted sea floor, rocks and kelp —
 which is a shape language a drawing library expresses exactly and a prompt only
 approximates. The source pipeline's rule was that geometry is arithmetic, not
 adjectives; a backdrop is almost entirely geometry, so none of it is left to a render.
 It also costs no image-generation quota, which the fish sprites need.
 
-Deterministic: the same seed always draws the same backdrop.
+Deterministic: the same seed always draws the same map.
 
-    python3 tools/art/draw_background.py --out /tmp/aquarium-art/staged/background.jpg
+    python3 tools/art/draw_background.py --out build/background.jpg --width 3240 --height 2160
 
-Two things learned by drawing it wrong first:
+Rules that came from drawing it wrong first:
 
-* **Everything below the waterline is a silhouette.** The first attempt gave the sand,
-  rocks and weed their own local colour and the result fought the fish exactly as the
-  photograph had. Scenery is now drawn as progressively darker, bluer shapes — the
-  contrast in the frame belongs to the fish.
+* **Everything below the waterline is a silhouette.** Giving the sand, rocks and weed
+  their own local colour reproduced exactly the contrast problem the original
+  photograph had. Scenery is drawn as progressively darker, bluer shapes; the contrast
+  in the frame belongs to the fish.
 * **Banded water reads as stripes.** Four flat rectangles with a small blur left four
-  visible seams. The water is a per-row gradient instead, which is free here and is the
-  one thing a flat-fill approach cannot fake.
+  visible seams. The water is a per-row gradient.
+* **The floor needs relief, not a line.** A single wavy edge across the bottom reads as
+  a hem. The floor is a heightmap with shelves and ravines cut into it, so panning
+  across the map actually shows something.
 
 ImageDraw does not antialias, so everything is drawn at SUPERSAMPLE times the final size
-and reduced with Lanczos; at final size every blade of weed has stepped diagonals.
+and reduced with Lanczos; at final size every blade of kelp has stepped diagonals.
 """
 
 from __future__ import annotations
@@ -34,122 +36,161 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-WIDTH, HEIGHT = 1080, 1920
-SUPERSAMPLE = 3
+SUPERSAMPLE = 2
 
-# Water, top to bottom. Deliberately narrow in range: a backdrop that travels far in
-# value has somewhere in it that matches any given fish.
 WATER_TOP = (8, 28, 46)
 WATER_BOTTOM = (22, 68, 92)
 
-# Everything below the waterline is a silhouette, tinted toward the water it sits in so
-# distance reads as haze rather than as a different palette.
-SAND = (38, 62, 74)
-# Only a few values above the sand: at (58, 88, 100) this drew as a bright squiggle
-# across the open middle and read as a stray mark rather than as a lit edge.
-SAND_CREST = (46, 72, 84)
-ROCK_NEAR = (14, 34, 46)
-ROCK_FAR = (24, 52, 68)
-WEED_NEAR = (12, 40, 46)
-WEED_FAR = (20, 58, 68)
+# Silhouettes, tinted toward the water they sit in so distance reads as haze.
+FLOOR_FAR = (24, 52, 68)
+FLOOR_NEAR = (19, 38, 50)
+FLOOR_CREST = (38, 64, 78)
+# Rocks must be darker than the floor they stand on, or they read as pale slabs lying on
+# top of it. The far ones are also drawn BEFORE the near floor so it occludes their feet
+# and they sit *in* the landscape rather than on it.
+ROCK_FAR = (21, 44, 58)
+ROCK_NEAR = (12, 28, 38)
+# What a ravine shows. Without it the cuts revealed the lighter far ridge behind and
+# read as pale spikes hanging in the landscape rather than as notches carved into it.
+DEEP = (10, 22, 32)
+KELP_FAR = (20, 58, 68)
+KELP_NEAR = (12, 40, 46)
 CORAL = (28, 44, 62)
 
-FLOOR_Y = 0.86
-# Scenery stays out of this horizontal band, so midwater always has plain ground behind
-# it. Fractions of the width.
-CLEAR_LEFT, CLEAR_RIGHT = 0.34, 0.66
+# Where the floor sits, as a fraction of height: its highest crest and its lowest trough.
+FLOOR_HIGH = 0.46
+FLOOR_LOW = 0.94
 
 
-def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+def _lerp(a, b, t):
     return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
 
-def draw(seed: int = 7) -> Image.Image:
+# Cuts at fixed fractions of the width, so panning reliably finds them.
+# (centre, half-width, depth). Wide and shallow: the first pass used 0.03-wide cuts
+# 0.55-0.75 deep and they drew as black needles running off the bottom of the frame —
+# cracks rather than canyons, and nothing a fish could swim into.
+RAVINES = ((0.22, 0.085, 0.34), (0.58, 0.070, 0.40), (0.83, 0.095, 0.28))
+
+
+def terrain_level(x: float, w: int, rng_seed: int) -> float:
+    """The landform at a given x, before anything is carved into it, 0..1.
+
+    Deliberately analytic rather than sampled from noise — a floor built from noise
+    wobbles at pixel scale and reads as texture rather than landscape.
+    """
+    t = x / max(1.0, w)
+    base = (0.52 * math.sin(t * math.tau * 1.1 + rng_seed)
+            + 0.30 * math.sin(t * math.tau * 2.7 + rng_seed * 2.0)
+            + 0.18 * math.sin(t * math.tau * 5.3 + rng_seed * 3.0))
+    return (base + 1.0) * 0.5
+
+
+def ravine_depth(x: float, w: int) -> float:
+    """How far the floor is cut away at a given x, in level units."""
+    t = x / max(1.0, w)
+    cut = 0.0
+    for centre, width, depth in RAVINES:
+        d = abs(t - centre) / width
+        if d < 1.0:
+            # Smoothstep rather than a squared falloff: squared comes to a point at the
+            # bottom, which is what made these read as needles.
+            cut += depth * (1.0 - (d * d * (3.0 - 2.0 * d)))
+    return cut
+
+
+def floor_height(x: float, w: int, h: int, rng_seed: int, carved: bool = True) -> float:
+    """The sea floor's y at a given x. `carved` includes the ravines cut into it."""
+    level = terrain_level(x, w, rng_seed)
+    if carved:
+        level += ravine_depth(x, w)
+    level = min(max(level, 0.0), 1.35)
+    return h * (FLOOR_HIGH + (FLOOR_LOW - FLOOR_HIGH) * level)
+
+
+def draw(width: int, height: int, seed: int = 7) -> Image.Image:
     rng = random.Random(seed)
-    w, h = WIDTH * SUPERSAMPLE, HEIGHT * SUPERSAMPLE
+    w, h = width * SUPERSAMPLE, height * SUPERSAMPLE
     image = Image.new("RGB", (w, h), WATER_TOP)
     _water(image, w, h)
 
-    # Back to front: far weed hazes into the water, then the floor, then rocks, then
-    # near weed and coral in front of them.
-    _weeds(image, rng, w, h, count=34, near=False)
-    _floor(image, rng, w, h)
-    _rocks(image, rng, w, h)
-    _weeds(image, rng, w, h, count=30, near=True)
-    _corals(image, rng, w, h)
+    # Back to front. Far rocks go before the near floor so their bases are buried.
+    _kelp(image, rng, w, h, stands=int(w / 520), near=False)
+    _far_floor(image, w, h, seed)
+    _rocks(image, rng, w, h, seed, far=True)
+    _deep(image, w, h, seed)
+    _near_floor(image, w, h, seed)
+    _rocks(image, rng, w, h, seed, far=False)
+    _kelp(image, rng, w, h, stands=int(w / 420), near=True)
+    _corals(image, rng, w, h, seed)
 
-    return image.resize((WIDTH, HEIGHT), Image.LANCZOS)
+    return image.resize((width, height), Image.LANCZOS)
 
 
-def _water(image: Image.Image, w: int, h: int) -> None:
-    """A per-row vertical gradient. Rectangular bands leave visible seams."""
+def _water(image, w, h):
     d = ImageDraw.Draw(image)
     for y in range(h):
         t = y / max(1, h - 1)
-        # Eased so most of the change happens low in the frame, leaving the top calm.
         d.line([(0, y), (w, y)], fill=_lerp(WATER_TOP, WATER_BOTTOM, t * t))
 
 
-def _floor(image: Image.Image, rng: random.Random, w: int, h: int) -> None:
-    """Sand across the bottom with a soft wavy crest."""
+def _far_floor(image, w, h, seed):
+    """A hazier ridge behind, offset and lifted so it reads as distance."""
     d = ImageDraw.Draw(image)
-    base = h * FLOOR_Y
-    crest = [(0.0, base)]
-    x = 0.0
-    while x <= w:
-        y = (base
-             + math.sin(x / w * math.pi * 2.4) * h * 0.010
-             + math.sin(x / w * math.pi * 7.3) * h * 0.004
-             + rng.uniform(-h * 0.002, h * 0.002))
-        crest.append((x, y))
-        x += w / 90.0
-    crest.append((float(w), base))
-    d.polygon([(0.0, float(h))] + crest + [(float(w), float(h))], fill=SAND)
-    d.line(crest[1:-1], fill=SAND_CREST, width=max(1, int(h * 0.0014)), joint="curve")
+    step = max(2, w // 900)
+    far = [(x, floor_height(x + w * 0.09, w, h, seed) - h * 0.085) for x in range(0, w + step, step)]
+    d.polygon([(0.0, float(h))] + far + [(float(w), float(h))], fill=FLOOR_FAR)
 
 
-def _mound(d: ImageDraw.ImageDraw, cx: float, cy: float, rw: float, rh: float,
-           rng: random.Random, colour: tuple[int, int, int]) -> None:
-    """A rounded boulder sitting ON the ground line — no skirt below it.
+def _deep(image, w, h, seed):
+    """Darkness filling the landform before the ravines are cut, so a cut reveals depth
+    rather than the pale ridge standing behind it."""
+    d = ImageDraw.Draw(image)
+    step = max(2, w // 900)
+    lip = [(x, floor_height(x, w, h, seed, carved=False) - h * 0.004)
+           for x in range(0, w + step, step)]
+    d.polygon([(0.0, float(h))] + lip + [(float(w), float(h))], fill=DEEP)
 
-    The first version closed the arc with two corner points, which drew a box under
-    every rock.
-    """
+
+def _near_floor(image, w, h, seed):
+    d = ImageDraw.Draw(image)
+    step = max(2, w // 900)
+    near = [(x, floor_height(x, w, h, seed)) for x in range(0, w + step, step)]
+    d.polygon([(0.0, float(h))] + near + [(float(w), float(h))], fill=FLOOR_NEAR)
+    d.line(near, fill=FLOOR_CREST, width=max(1, int(h * 0.0018)), joint="curve")
+
+
+def _mound(d, cx, cy, rw, rh, rng, colour):
+    """A rounded boulder sitting ON the ground line — no skirt below it."""
     points = []
-    steps = 40
+    steps = 34
     for i in range(steps + 1):
         a = math.pi + math.pi * i / steps
-        wobble = 1.0 + math.sin(i * 1.7 + rng.random()) * 0.045
+        wobble = 1.0 + math.sin(i * 1.7 + rng.random()) * 0.05
         points.append((cx + math.cos(a) * rw * wobble, cy + math.sin(a) * rh * wobble))
     points.append((cx + rw, cy))
     d.polygon(points, fill=colour)
 
 
-def _rocks(image: Image.Image, rng: random.Random, w: int, h: int) -> None:
+def _rocks(image, rng, w, h, seed, far: bool):
     d = ImageDraw.Draw(image)
-    for cx_frac, scale, far in [
-        (0.07, 1.25, False), (0.22, 0.85, True), (0.30, 0.6, False),
-        (0.72, 0.75, True), (0.84, 1.2, False), (0.96, 0.9, False),
-        (0.50, 0.5, True),
-    ]:
-        cx = w * cx_frac
-        rw = w * 0.16 * scale
-        rh = h * 0.052 * scale
-        cy = h * (FLOOR_Y + rng.uniform(0.005, 0.03))
+    for _ in range(int(w / (420 if far else 340))):
+        cx = rng.uniform(0, w)
+        scale = rng.uniform(0.6, 1.4)
+        rw = w * 0.022 * scale
+        rh = h * 0.026 * scale
+        offset = -h * 0.075 if far else rng.uniform(0.0, h * 0.02)
+        cy = floor_height(cx + (w * 0.09 if far else 0.0), w, h, seed, carved=False) + offset
         _mound(d, cx, cy, rw, rh, rng, ROCK_FAR if far else ROCK_NEAR)
 
 
-def _blade(d: ImageDraw.ImageDraw, base_x: float, base_y: float, height: float,
-           lean: float, half: float, colour: tuple[int, int, int]) -> None:
-    """One curved, tapering blade, sampled from a quadratic bezier.
-
-    Straight spikes read as grass or as needles; the curve is what makes it seaweed.
-    """
+def _blade(d, base_x, base_y, height, lean, half, colour):
+    """One curved, tapering blade. Straight spikes read as grass, not kelp."""
     tip_x = base_x + lean * height
     ctrl_x = base_x + lean * height * 0.25
     ctrl_y = base_y - height * 0.6
     left, right = [], []
-    steps = 16
+    steps = 18
     for i in range(steps + 1):
         t = i / steps
         mt = 1.0 - t
@@ -161,60 +202,62 @@ def _blade(d: ImageDraw.ImageDraw, base_x: float, base_y: float, height: float,
     d.polygon(left + list(reversed(right)), fill=colour)
 
 
-def _weeds(image: Image.Image, rng: random.Random, w: int, h: int,
-           count: int, near: bool) -> None:
+def _kelp(image, rng, w, h, stands, near):
+    """Stands of kelp rooted on the floor, some tall enough to reach midwater.
+
+    Stands, with gaps between them. Scattering blades evenly across the width drew a
+    continuous wall of grass — the map had no open water to swim through and no reason
+    to pan anywhere in particular.
+    """
     d = ImageDraw.Draw(image)
-    colour = WEED_NEAR if near else WEED_FAR
-    placed = 0
-    attempts = 0
-    while placed < count and attempts < count * 12:
-        attempts += 1
-        x = rng.uniform(0.0, 1.0)
-        if CLEAR_LEFT < x < CLEAR_RIGHT:
-            continue
-        # Shorter as they approach the clear band, so the middle opens gradually
-        # instead of ending at a visible wall of weed.
-        gap = min(abs(x - CLEAR_LEFT), abs(x - CLEAR_RIGHT))
-        height = h * rng.uniform(0.09, 0.26) * min(1.0, 0.35 + gap * 3.0)
-        if not near:
-            height *= 0.8
-        _blade(
-            d,
-            base_x=w * x,
-            base_y=h * rng.uniform(FLOOR_Y - 0.005, FLOOR_Y + 0.035),
-            height=height,
-            lean=rng.uniform(-0.32, 0.32),
-            half=w * rng.uniform(0.005, 0.011) * (1.0 if near else 0.8),
-            colour=colour,
-        )
-        placed += 1
+    colour = KELP_NEAR if near else KELP_FAR
+    seed = 7
+    for _ in range(stands):
+        root_x = rng.uniform(0, w)
+        # Rooted on the landform, not in mid-air over a ravine.
+        root_y = floor_height(root_x, w, h, seed, carved=False) + rng.uniform(-h * 0.004, h * 0.015)
+        # A stand, not a lone blade: a few blades from nearly the same root.
+        for _ in range(rng.randint(3, 7)):
+            tall = rng.random() < 0.28
+            blade_h = h * (rng.uniform(0.22, 0.42) if tall else rng.uniform(0.06, 0.18))
+            if not near:
+                blade_h *= 0.85
+            _blade(
+                d,
+                base_x=root_x + rng.uniform(-w * 0.006, w * 0.006),
+                base_y=root_y,
+                height=blade_h,
+                lean=rng.uniform(-0.28, 0.28),
+                half=w * rng.uniform(0.0016, 0.0034) * (1.0 if near else 0.8),
+                colour=colour,
+            )
 
 
-def _corals(image: Image.Image, rng: random.Random, w: int, h: int) -> None:
-    """Low soft-coral mounds. Kept nearly the rocks' value — the first attempt made
-    these bright violet and they became the brightest thing in the frame."""
+def _corals(image, rng, w, h, seed):
     d = ImageDraw.Draw(image)
-    for cx_frac in (0.15, 0.88):
-        cx = w * cx_frac
-        cy = h * (FLOOR_Y + 0.02)
-        for _ in range(7):
-            lobe_x = cx + rng.uniform(-w * 0.05, w * 0.05)
-            lobe_y = cy - rng.uniform(0.0, h * 0.03)
-            rx = w * rng.uniform(0.018, 0.032)
-            ry = h * rng.uniform(0.010, 0.020)
-            _mound(d, lobe_x, lobe_y + ry, rx, ry * 1.6, rng, CORAL)
+    for _ in range(int(w / 420)):
+        cx = rng.uniform(0, w)
+        cy = floor_height(cx, w, h, seed, carved=False) + h * 0.012
+        for _ in range(rng.randint(4, 8)):
+            lobe_x = cx + rng.uniform(-w * 0.012, w * 0.012)
+            lobe_y = cy - rng.uniform(0.0, h * 0.018)
+            rx = w * rng.uniform(0.004, 0.008)
+            ry = h * rng.uniform(0.008, 0.016)
+            _mound(d, lobe_x, lobe_y + ry, rx, ry * 1.5, rng, CORAL)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--width", type=int, default=3240)
+    parser.add_argument("--height", type=int, default=2160)
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
 
-    image = draw(args.seed)
+    image = draw(args.width, args.height, args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     if args.out.suffix.lower() in (".jpg", ".jpeg"):
-        image.save(args.out, quality=88, optimize=True, progressive=True)
+        image.save(args.out, quality=86, optimize=True, progressive=True)
     else:
         image.save(args.out, optimize=True)
     print(f"{args.out}  {image.width}x{image.height}  {args.out.stat().st_size / 1024:.0f} KB")

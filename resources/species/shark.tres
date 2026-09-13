@@ -13,6 +13,5 @@ speed = 86.0
 size = 90.0
 sight = 150.0
 maturity = 40.0
-capacity = 8
-starting_count = 1
+capacity = 12
 eats = Array[ExtResource("1_ueko5")]([ExtResource("2_iwbeh"), ExtResource("3_hbhaa")])
