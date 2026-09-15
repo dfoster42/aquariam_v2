@@ -101,14 +101,59 @@ func _check_flee_towards_cover() -> void:
 	var cover_at := prey_at + Vector2(0, -180)
 	tank.place_decor(kelp, cover_at)
 	var prey: Fish = tank.spawn(prey_s, prey_at)
-	tank.spawn(shark_s, prey_at + Vector2(220, 0))
+	tank.spawn(shark_s, prey_at + Vector2(150, 0))
 
-	var start_gap := prey.global_position.distance_to(cover_at)
-	for i in 60:
+	# Assert that it REACHES cover, not that it is nearer to cover after a fixed time.
+	#
+	# The distance version of this was flaky at about one run in two, and the reason is
+	# behaviour rather than noise: prey steers to cover, arrives after roughly 50px,
+	# becomes sheltered, and then goes back to fleeing straight away from the shark —
+	# which can carry it past the plant and out the far side. Measuring the gap at a
+	# fixed moment conflated "broke for cover" with "kept running once it got there".
+	# Tests the DECISION, not where the fish ends up after several seconds.
+	#
+	# Two earlier versions measured an outcome and were both flaky at about one run in
+	# two: distance-to-cover at a fixed time (which a fish that reaches cover and keeps
+	# fleeing fails), then "did it reach cover" (which fails whenever the shark catches
+	# it on the way, or drifts out of sight and the fish goes back to wandering). The
+	# rule being implemented is "when threatened and not yet hidden, steer at the
+	# nearest cover", and that is exactly what this measures.
+	var before := prey.global_position
+	tank._process(1.0 / 30.0)
+	var moved := prey.global_position - before
+	_check(moved.length() > 0.5, "the fleeing prey did not move at all")
+
+	var to_cover := before.direction_to(cover_at)
+	var angle := rad_to_deg(absf(moved.normalized().angle_to(to_cover)))
+	_check(angle < 20.0,
+		"fleeing prey steered %.0f degrees away from the cover it could see" % angle)
+
+	tank.queue_free()
+	_check_hidden_holds_position()
+
+## A hidden fish holds still rather than swimming out of its own cover.
+##
+## Only while it can actually see the threat — out of sight it goes back to wandering,
+## which is correct and is what made a first version of this check flaky: the shark sat
+## right on the edge of the prey's vision and drifted in and out of it.
+func _check_hidden_holds_position() -> void:
+	var tank := _tank()
+	var kelp := _decor(tank, "Kelp")
+	var cover_at := Vector2(1600, 1100)
+	tank.place_decor(kelp, cover_at)
+	var hidden: Fish = tank.spawn(_species(tank, "Clownfish"), cover_at)
+	tank.spawn(_species(tank, "Shark"), cover_at + Vector2(110, 0))
+
+	tank._process(1.0 / 30.0)
+	_check(hidden.sheltered, "a fish placed in cover did not register as sheltered")
+	var held := hidden.global_position
+	for i in 30:
 		tank._process(1.0 / 30.0)
-	var end_gap := prey.global_position.distance_to(cover_at)
-	_check(end_gap < start_gap,
-		"fleeing prey did not move toward cover (%.0f -> %.0f)" % [start_gap, end_gap])
+	_check(hidden.global_position.distance_to(held) < 2.0,
+		"a sheltered fish swam %.0fpx out of its own cover while threatened"
+			% hidden.global_position.distance_to(held))
+	_check(not hidden.is_eaten(), "a fish hiding in cover was eaten")
+
 	tank.queue_free()
 
 ## Plants have to survive a save, or a player's tank quietly loses its cover overnight.

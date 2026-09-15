@@ -48,7 +48,7 @@ FLOOR_CREST = (38, 64, 78)
 # Rocks must be darker than the floor they stand on, or they read as pale slabs lying on
 # top of it. The far ones are also drawn BEFORE the near floor so it occludes their feet
 # and they sit *in* the landscape rather than on it.
-ROCK_FAR = (21, 44, 58)
+ROCK_FAR = (22, 47, 61)
 ROCK_NEAR = (12, 28, 38)
 # What a ravine shows. Without it the cuts revealed the lighter far ridge behind and
 # read as pale spikes hanging in the landscape rather than as notches carved into it.
@@ -65,8 +65,8 @@ CORAL = (28, 44, 62)
 # heightmap at a single x and then draw a shape that assumes level ground beneath, so on
 # any real gradient they hung in the water with nothing under them. Seating objects
 # against a slope properly is issue #4; until then there are no slopes to get wrong.
-FLOOR_HIGH = 0.74
-FLOOR_LOW = 0.84
+FLOOR_HIGH = 0.58
+FLOOR_LOW = 0.90
 
 
 def _lerp(a, b, t):
@@ -77,7 +77,9 @@ def _lerp(a, b, t):
 # ridge, and its walls are the steepest ground in the map — exactly what nothing is
 # seated against correctly yet. Tracked in issue #4; the machinery below still works if
 # entries are put back.
-RAVINES: tuple = ()
+# Gentler than the seating experiment that proved the fix: at 0.36-0.44 deep these read
+# as slots cut in the ground with kelp growing out of a slit, not as dips in a sea bed.
+RAVINES = ((0.21, 0.115, 0.20), (0.57, 0.100, 0.24), (0.85, 0.125, 0.17))
 
 
 def terrain_level(x: float, w: int, rng_seed: int) -> float:
@@ -121,15 +123,24 @@ def draw(width: int, height: int, seed: int = 7) -> Image.Image:
     image = Image.new("RGB", (w, h), WATER_TOP)
     _water(image, w, h)
 
-    # Back to front. Far rocks go before the near floor so their bases are buried.
-    _kelp(image, rng, w, h, stands=int(w / 520), near=False)
+    # Every ground object is drawn BEFORE the floor it stands on, and buried into it.
+    # The floor polygon then occludes whatever lies below the surface at every column,
+    # which is what makes objects sit correctly on a slope without any of them having to
+    # know the slope exists.
+    def far_ground(x: float) -> float:
+        return floor_height(x + w * 0.09, w, h, seed) - h * 0.035
+
+    def near_ground(x: float) -> float:
+        return floor_height(x, w, h, seed)
+
+    _kelp(image, rng, w, h, stands=int(w / 520), near=False, ground=far_ground)
+    _rocks(image, rng, w, h, far=True, rng_ground=far_ground)
     _far_floor(image, w, h, seed)
-    _rocks(image, rng, w, h, seed, far=True)
-    _deep(image, w, h, seed)
+
+    _kelp(image, rng, w, h, stands=int(w / 420), near=True, ground=near_ground)
+    _rocks(image, rng, w, h, far=False, rng_ground=near_ground)
+    _corals(image, rng, w, h, near_ground)
     _near_floor(image, w, h, seed)
-    _rocks(image, rng, w, h, seed, far=False)
-    _kelp(image, rng, w, h, stands=int(w / 420), near=True)
-    _corals(image, rng, w, h, seed)
 
     return image.resize((width, height), Image.LANCZOS)
 
@@ -149,14 +160,11 @@ def _far_floor(image, w, h, seed):
     d.polygon([(0.0, float(h))] + far + [(float(w), float(h))], fill=FLOOR_FAR)
 
 
-def _deep(image, w, h, seed):
-    """Darkness filling the landform before the ravines are cut, so a cut reveals depth
-    rather than the pale ridge standing behind it."""
-    d = ImageDraw.Draw(image)
-    step = max(2, w // 900)
-    lip = [(x, floor_height(x, w, h, seed, carved=False) - h * 0.004)
-           for x in range(0, w + step, step)]
-    d.polygon([(0.0, float(h))] + lip + [(float(w), float(h))], fill=DEEP)
+# No separate "deep" layer. One existed to stop a ravine revealing the lighter ridge
+# behind it, but it filled the whole uncarved landform, so a dip showed the dark fill
+# rising to the uncarved crest and read as a dark hill standing in front of the floor
+# rather than as a cut into it. A dip is now simply a dip in the floor's silhouette, with
+# the distant ridge visible through it — which is what looking into one would show.
 
 
 def _near_floor(image, w, h, seed):
@@ -167,30 +175,59 @@ def _near_floor(image, w, h, seed):
     d.line(near, fill=FLOOR_CREST, width=max(1, int(h * 0.0018)), joint="curve")
 
 
-def _mound(d, cx, cy, rw, rh, rng, colour):
-    """A rounded boulder sitting ON the ground line — no skirt below it."""
-    points = []
-    steps = 34
+def _mound(d, cx, rw, rh, rng, colour, ground, bury=0.9):
+    """A boulder that tilts to match the ground and is buried into it.
+
+    Three versions of this got it wrong in different ways:
+
+    * A half-ellipse with a flat bottom at one sampled y. On any gradient one end of that
+      flat bottom lifted off the ground and the rock hung in the water.
+    * A crown tracing the ground column by column. That never floats, but the rock's
+      height then varies with the terrain beneath it, so on a steep slope it stretches
+      into a smear several times its own size.
+    * This one: the ground is sampled at the rock's left and right edges only and the
+      shape is tilted along that line, so it keeps its proportions on any gradient.
+
+    The base runs a full radius below that line. It does not need to match the ground
+    exactly, because the floor is drawn afterwards and occludes everything beneath the
+    surface — which is what removes the last chance of a visible gap.
+    """
+    left = ground(cx - rw)
+    right = ground(cx + rw)
+
+    # Cap how far it can lean. Across a cliff the two samples differ by far more than
+    # the rock is tall, and an unclamped tilt stretches it into a long diagonal streak.
+    # A real boulder on that gradient sits at a plausible angle and is mostly buried —
+    # which is what this produces, since the floor is drawn over whatever ends up below
+    # the surface.
+    max_lean = rh * 2.0
+    drop = max(-max_lean, min(max_lean, right - left))
+    centre = (left + right) * 0.5
+    left, right = centre - drop * 0.5, centre + drop * 0.5
+
+    crown = []
+    steps = 30
     for i in range(steps + 1):
         a = math.pi + math.pi * i / steps
+        x = cx + math.cos(a) * rw
+        seat = left + (right - left) * ((x - (cx - rw)) / max(1e-6, 2.0 * rw))
         wobble = 1.0 + math.sin(i * 1.7 + rng.random()) * 0.05
-        points.append((cx + math.cos(a) * rw * wobble, cy + math.sin(a) * rh * wobble))
-    points.append((cx + rw, cy))
-    d.polygon(points, fill=colour)
+        crown.append((x, seat - abs(math.sin(a)) * rh * wobble))
+
+    base = []
+    for x, _ in reversed(crown):
+        seat = left + (right - left) * ((x - (cx - rw)) / max(1e-6, 2.0 * rw))
+        base.append((x, seat + rh * bury))
+    d.polygon(crown + base, fill=colour)
 
 
-def _rocks(image, rng, w, h, seed, far: bool):
+def _rocks(image, rng, w, h, far: bool, rng_ground):
     d = ImageDraw.Draw(image)
-    for _ in range(int(w / (420 if far else 340))):
+    for _ in range(int(w / (300 if far else 190))):
         cx = rng.uniform(0, w)
-        scale = rng.uniform(0.6, 1.4)
-        rw = w * 0.022 * scale
-        rh = h * 0.026 * scale
-        # Bedded INTO the floor, and the far ones measured against the same near floor
-        # everything else stands on. Sampling the far ridge and lifting by a fixed
-        # amount left them hovering wherever the near floor happened to be lower.
-        cy = floor_height(cx, w, h, seed, carved=False) + rh * (0.55 if far else 0.35)
-        _mound(d, cx, cy, rw, rh, rng, ROCK_FAR if far else ROCK_NEAR)
+        scale = rng.uniform(0.6, 1.4) * (0.6 if far else 1.0)
+        _mound(d, cx, w * 0.022 * scale, h * 0.026 * scale, rng,
+               ROCK_FAR if far else ROCK_NEAR, rng_ground)
 
 
 def _blade(d, base_x, base_y, height, lean, half, colour):
@@ -211,7 +248,7 @@ def _blade(d, base_x, base_y, height, lean, half, colour):
     d.polygon(left + list(reversed(right)), fill=colour)
 
 
-def _kelp(image, rng, w, h, stands, near):
+def _kelp(image, rng, w, h, stands, near, ground):
     """Stands of kelp rooted on the floor, some tall enough to reach midwater.
 
     Stands, with gaps between them. Scattering blades evenly across the width drew a
@@ -221,20 +258,28 @@ def _kelp(image, rng, w, h, stands, near):
     d = ImageDraw.Draw(image)
     colour = KELP_NEAR if near else KELP_FAR
     seed = 7
-    for _ in range(stands):
+    placed = 0
+    attempts = 0
+    while placed < stands and attempts < stands * 10:
+        attempts += 1
         root_x = rng.uniform(0, w)
-        # Rooted on the landform, not in mid-air over a ravine.
-        root_y = floor_height(root_x, w, h, seed, carved=False) + rng.uniform(h * 0.002, h * 0.016)
+        # Not on the steep walls of a dip: a stand rooted there grows out of a slit.
+        if ravine_depth(root_x, w) > 0.05:
+            continue
+        placed += 1
         # A stand, not a lone blade: a few blades from nearly the same root.
         for _ in range(rng.randint(3, 7)):
             tall = rng.random() < 0.28
             blade_h = h * (rng.uniform(0.22, 0.42) if tall else rng.uniform(0.06, 0.18))
             if not near:
                 blade_h *= 0.85
+            # Each blade samples the ground at its OWN x and roots below it, so a stand
+            # spanning a gradient follows it instead of standing on one shared level.
+            blade_x = root_x + rng.uniform(-w * 0.006, w * 0.006)
             _blade(
                 d,
-                base_x=root_x + rng.uniform(-w * 0.006, w * 0.006),
-                base_y=root_y,
+                base_x=blade_x,
+                base_y=ground(blade_x) + h * 0.02,
                 height=blade_h,
                 lean=rng.uniform(-0.28, 0.28),
                 half=w * rng.uniform(0.0016, 0.0034) * (1.0 if near else 0.8),
@@ -242,17 +287,15 @@ def _kelp(image, rng, w, h, stands, near):
             )
 
 
-def _corals(image, rng, w, h, seed):
+def _corals(image, rng, w, h, ground):
     d = ImageDraw.Draw(image)
     for _ in range(int(w / 420)):
         cx = rng.uniform(0, w)
-        cy = floor_height(cx, w, h, seed, carved=False) + h * 0.016
         for _ in range(rng.randint(4, 8)):
             lobe_x = cx + rng.uniform(-w * 0.012, w * 0.012)
-            lobe_y = cy - rng.uniform(0.0, h * 0.018)
             rx = w * rng.uniform(0.004, 0.008)
             ry = h * rng.uniform(0.008, 0.016)
-            _mound(d, lobe_x, lobe_y + ry, rx, ry * 1.5, rng, CORAL)
+            _mound(d, lobe_x, rx, ry * 1.5, rng, CORAL, ground)
 
 
 def main() -> int:

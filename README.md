@@ -284,12 +284,28 @@ the map's width at its widest zoom.
 `tools/art/draw_background.py` draws the terrain: a gently undulating sea floor, a
 hazier ridge behind it, rocks and coral bedded into the ground, and stands of kelp.
 
-The floor is deliberately close to flat. A dramatic version came first, with real
-slopes and ravines, and it did not read as natural: rocks and kelp sample the heightmap
-at a single x and then draw a shape that assumes level ground beneath, so on any real
-gradient they hung in the water with nothing under them. Seating objects against a slope
-properly is [issue #4](https://github.com/dfoster42/aquariam_v2/issues/4); until then
-there are no slopes to get wrong.
+The floor has real relief — rolling ground with dips cut into it — and objects sit on it
+correctly. Three things make that work, and each replaced something that did not:
+
+**The floor is drawn last, over everything standing on it.** Rocks, kelp and coral are
+drawn first and buried, so the floor occludes whatever falls below the surface at every
+column. That is what removes floating and contact gaps outright: no object has to know
+the ground's shape to sit on it.
+
+**A mound tilts, it does not trace.** The ground is sampled at the rock's left and right
+edges and the shape is tilted along that line. A flat-bottomed mound seated at one
+sampled y lifts off the ground at one end on any gradient; a crown tracing the ground
+column by column never floats but stretches into a smear several times its own size on a
+slope. The lean is also clamped, because across a cliff the two samples differ by far
+more than the rock is tall.
+
+**Kelp blades each sample their own x.** A stand spanning a gradient follows it instead
+of standing on one shared level.
+
+There is no separate dark layer behind the dips. One existed to stop a dip revealing the
+lighter ridge behind it, but it filled the whole uncarved landform, so a dip showed dark
+fill rising to the uncarved crest and read as a dark hill in front of the floor rather
+than a cut into it. A dip is now simply a dip in the silhouette.
 
 Rocks must also be darker than the floor they stand on, and the far ones drawn *before*
 the near floor, or they read as pale slabs lying on top of the landscape.

@@ -7,7 +7,7 @@ extends Node2D
 
 signal eaten(fish: Fish)
 
-enum Behaviour { WANDER, HUNT, FLEE }
+enum Behaviour { WANDER, HUNT, FLEE, HIDE }
 
 const ARRIVE_DISTANCE: float = 24.0
 ## How close a predator's MOUTH must come to prey to eat it — not its centre.
@@ -100,11 +100,21 @@ func _decide_heading(hash: SpatialHash, shelter: SpatialHash) -> Vector2:
 	var nearest_threat: Fish = _nearest_of(neighbours, _predators)
 	if nearest_threat != null:
 		behaviour = Behaviour.FLEE
-		# Break for cover if any is in sight, otherwise straight away. Without this,
-		# plants would shelter only the prey that happened to drift into one, and the
-		# player would have no way to see that cover was doing anything.
+		# Already hidden: hold still rather than run.
+		#
+		# Fleeing while sheltered swam the fish straight out of its own cover and into
+		# the open, where the predator could see it again — so a plant protected a fish
+		# only until something threatened it, which is exactly when it was supposed to
+		# work. A fish holding in the weeds is also what one actually does.
+		if sheltered:
+			behaviour = Behaviour.HIDE
+			return Vector2.ZERO
+
+		# Otherwise break for cover if any is in sight. Without this, plants would
+		# shelter only the prey that happened to drift into one, and the player would
+		# have no way to see that cover was doing anything.
 		var refuge := _nearest_shelter(shelter)
-		if refuge != null and not sheltered:
+		if refuge != null:
 			return global_position.direction_to(refuge.global_position)
 		return nearest_threat.global_position.direction_to(global_position)
 
