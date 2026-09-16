@@ -26,6 +26,11 @@ func _initialize() -> void:
 	_main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_main)
 	_ui = _main.get_node("UI")
+	# A new tank opens empty, and empty water says nothing about the controls. Only
+	# when there is no save to show, so a real tank is photographed as it is.
+	var tank: Aquarium = _main.get_node("Aquarium")
+	if tank.population() == 0:
+		tank.seed_starting_population()
 
 func _process(_delta: float) -> bool:
 	_frames += 1

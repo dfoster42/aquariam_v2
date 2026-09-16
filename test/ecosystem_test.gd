@@ -39,6 +39,9 @@ func _process(_delta: float) -> bool:
 	return true
 
 func _run() -> void:
+	# A tank opens empty now, so the simulation seeds its own starting mix.
+	_tank.seed_starting_population()
+
 	# Two sharks on top of a seeded tank: enough predation to matter.
 	var shark := _species_named("Shark")
 	for i in 1:

@@ -97,8 +97,11 @@ func _ready() -> void:
 	background.modulate = backdrop_tint
 	_fit_background()
 
-	if not restore(TankStore.read()):
-		_seed_starting_population()
+	# A new aquarium opens EMPTY and the player fills it. There is no seeding step:
+	# restore() simply finds nothing to restore, and the picker's hint line is the
+	# instruction. Stocking a new tank with 55 fish made "start a new aquarium" mean
+	# "start someone else's aquarium".
+	restore(TankStore.read())
 
 ## The largest step a fish will take in one frame. After a stall, an unclamped delta
 ## teleports every fish across the tank in a single tick.
@@ -485,7 +488,13 @@ func _random_point() -> Vector2:
 func save() -> Error:
 	return TankStore.save(self)
 
-func _seed_starting_population() -> void:
+## Stocks the tank with each species' `starting_count`, scattered at random.
+##
+## Nothing in the app calls this — a new aquarium opens empty. It is how the simulation
+## tests and tools/screenshot.gd stand up a representative tank in one line, and the
+## counts are the tuned ones, so what they produce is the population the tank settles
+## at rather than an arbitrary crowd.
+func seed_starting_population() -> void:
 	for species in available_species:
 		for i in species.starting_count:
 			spawn(species, _random_point())

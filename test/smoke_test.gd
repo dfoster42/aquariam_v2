@@ -50,13 +50,20 @@ func _begin() -> void:
 		_check(not seen_species.has(species.resource_path),
 			"species %s is listed twice" % species.display_name)
 		seen_species.append(species.resource_path)
+	# A new aquarium opens empty and the player fills it. This is the contract, so it is
+	# asserted rather than assumed — everything below needs fish, and a tank that seeded
+	# itself again would hide the regression behind a passing test.
+	_check(_tank.population() == 0,
+		"a new tank should open empty, got %d fish" % _tank.population())
+
 	# Derived, not hardcoded: seeding follows each species' starting_count, so a tuning
 	# change should not read as a test failure.
 	var seeded := 0
 	for species: FishSpecies in _tank.available_species:
 		seeded += species.starting_count
+	_tank.seed_starting_population()
 	_check(_tank.population() == seeded,
-		"expected %d seeded fish, got %d" % [seeded, _tank.population()])
+		"seeding should give %d fish, got %d" % [seeded, _tank.population()])
 	_check(_tank.bounds().size == _tank.tank_size, "bounds %s do not match tank_size %s" % [_tank.bounds().size, _tank.tank_size])
 
 	_check_ui_passes_touches()

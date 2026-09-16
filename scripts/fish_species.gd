@@ -31,9 +31,12 @@ extends Resource
 @export_range(0.0, 400.0, 5.0) var breed_distance: float = 0.0
 ## Carrying capacity for this species. Breeding stops at the cap; the tank does not.
 @export_range(0, 500, 1) var capacity: int = 40
-## How many of this species a fresh tank opens with. Seeding an equal number of every
-## species gives a new tank as many sharks as clownfish, and the prey are eaten before
-## any of them can pair.
+## How many of this species `Aquarium.seed_starting_population()` puts in a tank.
+##
+## NOT what a player sees: a new aquarium opens empty and is filled by tapping. This is
+## the tuned starting mix the simulation tests and the screenshot tool stand a tank up
+## with. An equal number of every species would give as many sharks as clownfish, and
+## the prey would be eaten before any of them could pair.
 @export_range(0, 100, 1) var starting_count: int = 3
 
 @export_group("Appetite")

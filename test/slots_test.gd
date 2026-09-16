@@ -59,6 +59,7 @@ func _check_create_and_switch() -> void:
 func _check_isolation() -> void:
 	var slot_a := TankStore.active_slot()
 	var tank_a := _new_tank()
+	tank_a.seed_starting_population()
 	var count_a := tank_a.population()
 	TankStore.save(tank_a, slot_a)
 

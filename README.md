@@ -139,7 +139,18 @@ user://tanks/index.json   the slot list, and which one is active
 user://tanks/<id>.json    one tank
 ```
 
-The Tanks button lists them with live fish counts, switches, creates and deletes.
+**A new aquarium opens empty.** The player fills it by tapping the water, and the dock's
+hint line is the instruction. It used to be stocked with 55 fish — the sum of every
+species' `starting_count` — which made "start a new aquarium" mean "start someone
+else's". `Aquarium.seed_starting_population()` still exists, but nothing in the app
+calls it: it is how the simulation tests and `tools/screenshot.gd` stand a tank up.
+
+An emptied tank stays empty across an absence, too. `Offline.project()` returns a
+population of zero unchanged, so no length of absence conjures a fish from nothing.
+
+The Tanks button lists them with live fish counts, switches, creates and deletes. A new
+tank takes the first "Aquarium N" that is free rather than one past the slot count,
+which repeated a name as soon as a tank was deleted.
 Switching saves the current tank first, then reloads the scene — the Aquarium already
 builds itself from the active slot in `_ready`, so there is no second "load a different
 tank" path that could drift from the one used at launch. Deleting the only tank is
@@ -212,7 +223,8 @@ actually gates the build.
 ## Persistence
 
 The tank is written to `user://tank.json` when the app closes or is backgrounded, and
-restored on launch; a fresh tank is seeded only when there is nothing to restore.
+restored on launch. When there is nothing to restore the tank simply opens empty —
+nothing is seeded.
 
 JSON rather than a `.tres`: a saved Resource is a script-bearing file the engine will
 instantiate on load, which turns a save file into a code path. Species are stored by

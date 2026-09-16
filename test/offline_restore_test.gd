@@ -27,6 +27,8 @@ func _run() -> void:
 	root.add_child(first)
 	var tank: Aquarium = first.get_node("Aquarium")
 
+	# A new tank opens empty; an absence is only interesting over a stocked one.
+	tank.seed_starting_population()
 	var before := tank.population()
 	var oldest_before := _oldest_age(tank)
 	_check(TankStore.save(tank) == OK, "saving failed")
@@ -84,6 +86,11 @@ func _check_long_absence() -> void:
 	seed_tank.get_node("Aquarium").autosave_interval = 0.0
 	root.add_child(seed_tank)
 	var tank: Aquarium = seed_tank.get_node("Aquarium")
+	# Cleared first: the earlier case has already saved a grown tank into this slot, so
+	# this instance restores it and seeding on top would stock it twice. The check wants
+	# a known starting mix, not whatever the previous case happened to leave.
+	tank.clear_tank()
+	tank.seed_starting_population()
 	var before := tank.population()
 	TankStore.save(tank)
 

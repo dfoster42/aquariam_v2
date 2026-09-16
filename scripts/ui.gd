@@ -210,10 +210,23 @@ func _switch_to(slot_id: String) -> void:
 
 func _create() -> void:
 	_aquarium.save()
-	var id := TankStore.create_slot("Aquarium %d" % (TankStore.slots().size() + 1))
+	var id := TankStore.create_slot(_next_tank_name())
 	if id == "":
 		return
 	_reload()
+
+## The first "Aquarium N" no tank is already using.
+##
+## Numbering by the slot count repeats a name as soon as one is deleted: two tanks both
+## called "Aquarium 2" is a switcher that cannot tell you which is which.
+func _next_tank_name() -> String:
+	var taken: Dictionary = {}
+	for slot: Variant in TankStore.slots():
+		taken[str(slot.get("name", ""))] = true
+	var index := TankStore.slots().size() + 1
+	while taken.has("Aquarium %d" % index):
+		index += 1
+	return "Aquarium %d" % index
 
 ## Deleting a tank destroys years of a player's fish in one tap, so it asks first.
 func _confirm_delete(slot_id: String, name: String) -> void:
