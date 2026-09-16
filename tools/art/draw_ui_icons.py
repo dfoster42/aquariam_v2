@@ -144,6 +144,42 @@ def fish() -> Image.Image:
     return _finish(image)
 
 
+def undo() -> Image.Image:
+    """The reply-arrow form: a head pointing left, a shaft, and a tail curving away.
+
+    Two other forms were drawn and rejected by looking at them small. A near-full circle
+    with a gap is the *refresh* glyph and promises something else entirely; a top arc
+    with a head hanging under its left tip read as an arch with a triangle beside it,
+    because nothing in it travels. Here the shaft and the head are one straight run, so
+    the eye follows it.
+    """
+    image, d, s = _canvas()
+    width = int(s * 0.105)
+    # Shaft, then the tail curving down and right from its far end.
+    d.line([(s * 0.30, s * 0.42), (s * 0.60, s * 0.42)], fill=WHITE, width=width)
+    d.arc([s * 0.36, s * 0.42, s * 0.84, s * 0.90], start=270, end=390, fill=WHITE, width=width)
+    d.polygon(
+        [(s * 0.13, s * 0.42), (s * 0.36, s * 0.27), (s * 0.36, s * 0.57)], fill=WHITE)
+    return _finish(image)
+
+
+def remove() -> Image.Image:
+    """A bin. The one glyph in the set that has to say "this destroys something"."""
+    image, d, s = _canvas()
+    # Handle and lid.
+    d.rounded_rectangle(
+        [s * 0.38, s * 0.13, s * 0.62, s * 0.22], radius=s * 0.03, fill=WHITE)
+    d.rounded_rectangle(
+        [s * 0.14, s * 0.24, s * 0.86, s * 0.34], radius=s * 0.04, fill=WHITE)
+    # Body, tapered, with two slots punched out.
+    d.polygon(
+        [(s * 0.22, s * 0.38), (s * 0.78, s * 0.38), (s * 0.71, s * 0.88), (s * 0.29, s * 0.88)],
+        fill=WHITE)
+    for x in (0.42, 0.58):
+        d.line([(s * x, s * 0.47), (s * x, s * 0.79)], fill=CLEAR, width=int(s * 0.07))
+    return _finish(image)
+
+
 GLYPHS = {
     "sound_on": sound_on,
     "sound_off": sound_off,
@@ -153,6 +189,8 @@ GLYPHS = {
     "close": close,
     "feed": feed,
     "fish": fish,
+    "undo": undo,
+    "remove": remove,
 }
 
 

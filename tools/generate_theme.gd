@@ -176,6 +176,15 @@ func _icon_button(theme: Theme) -> void:
 	pressed.bg_color = ACCENT
 	pressed.border_color = ACCENT
 	theme.set_stylebox("pressed", "IconButton", pressed)
+
+	# Without its own disabled box this falls back to Button's, whose corner radius is
+	# RADIUS rather than half the side — the undo button turned into a square the moment
+	# there was nothing to undo.
+	var disabled := normal.duplicate() as StyleBoxFlat
+	disabled.bg_color = Color(GLASS.r, GLASS.g, GLASS.b, 0.34)
+	disabled.border_color = Color(1.0, 1.0, 1.0, 0.05)
+	theme.set_stylebox("disabled", "IconButton", disabled)
+	theme.set_color("icon_disabled_color", "IconButton", Color(TEXT.r, TEXT.g, TEXT.b, 0.32))
 	theme.set_stylebox("focus", "IconButton", StyleBoxEmpty.new())
 	# Without this the glyph draws at its own 96px and the button becomes 120px across.
 	theme.set_constant("icon_max_width", "IconButton", pt(20))

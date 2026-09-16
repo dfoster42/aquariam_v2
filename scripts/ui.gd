@@ -49,6 +49,8 @@ const ICON_PLAY: Texture2D = preload("res://assets/textures/ui/play.png")
 const ICON_CLOSE: Texture2D = preload("res://assets/textures/ui/close.png")
 const ICON_FEED: Texture2D = preload("res://assets/textures/ui/feed.png")
 const ICON_FISH: Texture2D = preload("res://assets/textures/ui/fish.png")
+const ICON_UNDO: Texture2D = preload("res://assets/textures/ui/undo.png")
+const ICON_REMOVE: Texture2D = preload("res://assets/textures/ui/remove.png")
 
 @export var aquarium_path: NodePath = ^"../Aquarium"
 
@@ -58,6 +60,7 @@ var _group := ButtonGroup.new()
 @onready var safe: MarginContainer = $Root/Safe
 @onready var population_label: Label = %Population
 @onready var fish_icon: TextureRect = %FishIcon
+@onready var undo_button: Button = %Undo
 @onready var sound_button: Button = %Sound
 @onready var tanks_button: Button = %Tanks
 @onready var pause_button: Button = %Pause
@@ -80,8 +83,13 @@ func _ready() -> void:
 	fish_icon.texture = ICON_FISH
 	tanks_button.icon = ICON_TANKS
 	close_button.icon = ICON_CLOSE
+	undo_button.icon = ICON_UNDO
+	undo_button.tooltip_text = "Undo"
 
 	pause_button.pressed.connect(_aquarium.toggle_paused)
+	undo_button.pressed.connect(_undo)
+	_aquarium.undo_changed.connect(_on_undo_changed)
+	_on_undo_changed(_aquarium.can_undo())
 	tanks_button.pressed.connect(_toggle_sheet)
 	close_button.pressed.connect(_toggle_sheet)
 	new_tank_button.pressed.connect(_create)
@@ -97,6 +105,15 @@ func _ready() -> void:
 
 	get_viewport().size_changed.connect(_apply_safe_area)
 	_apply_safe_area()
+
+## Undoing a removal puts a fish back, so the picker's hint can go stale with it — the
+## hint is read from the tank rather than remembered, so refreshing it is enough.
+func _undo() -> void:
+	_aquarium.undo()
+	_refresh_hint()
+
+func _on_undo_changed(available: bool) -> void:
+	undo_button.disabled = not available
 
 func _toggle_sound() -> void:
 	var main := get_parent()
@@ -310,6 +327,12 @@ func _build_picker() -> void:
 		_refresh_hint())
 	picker.add_child(feed)
 
+	var remove := _tile("Remove", ICON_REMOVE)
+	remove.pressed.connect(func() -> void:
+		_aquarium.set_removing(true)
+		_refresh_hint())
+	picker.add_child(remove)
+
 	_refresh_hint()
 
 ## One tile: the thing's own artwork over its name.
@@ -346,7 +369,9 @@ func _divider() -> VSeparator:
 ## What a tap on the water will do, in words, read back from the tank rather than
 ## remembered here — the picker and the tank cannot disagree about what is armed.
 func _refresh_hint() -> void:
-	if _aquarium.feeding:
+	if _aquarium.removing:
+		hint.text = "Tap a fish or plant to remove it"
+	elif _aquarium.feeding:
 		hint.text = "Tap the water to drop food"
 	elif _aquarium.selected_decor != null:
 		hint.text = "Tap the water to plant %s" % _aquarium.selected_decor.display_name

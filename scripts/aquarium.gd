@@ -17,6 +17,8 @@ signal species_selected(species: FishSpecies)
 signal paused_changed(paused: bool)
 signal decor_changed(count: int)
 signal food_changed(count: int)
+## Fires when the undo button should enable or disable.
+signal undo_changed(available: bool)
 
 const FISH_SCENE: PackedScene = preload("res://scenes/fish.tscn")
 const DECOR_SCENE: PackedScene = preload("res://scenes/decor.tscn")
@@ -25,6 +27,12 @@ const FOOD_SCENE: PackedScene = preload("res://scenes/food.tscn")
 const MAX_FOOD: int = 250
 ## Refuse to spawn beyond this; keeps a stray tap-and-hold from hanging the app.
 const MAX_POPULATION: int = 1500
+## How close a tap in remove mode has to land, in SCREEN units. The caller converts it
+## to world units, because a finger is a fixed size on the glass and what sits under it
+## is whatever the zoom says: at the widest zoom one screen unit is about eight world
+## units, at the tightest about a third of one. A world-space constant would grab a fish
+## three body-lengths away when zoomed out and miss the one under the finger zoomed in.
+const REMOVE_REACH: float = 48.0
 
 ## Every species the tank can spawn. Populated in the inspector — drop a new
 ## .tres in here and it appears in the picker with no code change. An exported
@@ -59,6 +67,8 @@ var selected_species: FishSpecies
 ## What a tap places. A species, a decor kind, or food — never more than one.
 var selected_decor: DecorKind
 var feeding: bool = false
+## Taps take things out instead of putting them in.
+var removing: bool = false
 
 var _fish: Array[Fish] = []
 var _decor: Array[Decor] = []
@@ -71,6 +81,8 @@ var _hash: SpatialHash
 var _bounds: Rect2 = Rect2()
 var _paused: bool = false
 var _since_autosave: float = 0.0
+var _history := TankHistory.new()
+var _undo_available: bool = false
 
 @onready var background: Sprite2D = $Background
 @onready var fish_layer: Node2D = $FishLayer
@@ -132,6 +144,9 @@ func _process(delta: float) -> void:
 		fish.tick(step, _hash, _shelter_hash, _food_hash)
 	_reap()
 	_breed()
+	# A fish the player placed and a shark then ate cannot be un-placed, so the button
+	# has to go dark when the last thing it could undo disappears on its own.
+	_note_undo_state()
 
 	if autosave_interval > 0.0:
 		_since_autosave += delta
@@ -228,13 +243,152 @@ func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 	population_changed.emit(_fish.size())
 	return fish
 
-## Places whatever the picker currently has selected. What a tap on the tank calls.
-func place_selected(position: Vector2) -> Node2D:
+## Places — or takes out — whatever the picker currently has armed. What a tap calls.
+##
+## This, and not spawn(), is where undo is recorded: breeding and restoring both go
+## through spawn(), and a tank that bred while you were looking away would otherwise
+## fill the undo stack with fish you never placed.
+##
+## `reach` is the tap's grab radius in WORLD units and only matters in remove mode; the
+## caller scales REMOVE_REACH by the camera's zoom.
+func place_selected(position: Vector2, reach: float = REMOVE_REACH) -> Node2D:
+	if removing:
+		return remove_at(position, reach)
+
+	var placed: Node2D = null
 	if feeding:
-		return drop_food(position)
-	if selected_decor != null:
-		return place_decor(selected_decor, position)
-	return spawn(selected_species, position)
+		placed = drop_food(position)
+	elif selected_decor != null:
+		placed = place_decor(selected_decor, position)
+	else:
+		placed = spawn(selected_species, position)
+
+	if placed != null:
+		_history.note_added(placed)
+		_note_undo_state()
+	return placed
+
+## Takes out the one fish, plant or pellet nearest the tap, if anything is close enough.
+## Returns what was removed, or null when the tap landed on open water.
+func remove_at(position: Vector2, reach: float = REMOVE_REACH) -> Node2D:
+	var target := _nearest_editable(position, maxf(reach, 1.0))
+	if target == null:
+		return null
+
+	var was_id := target.get_instance_id()
+	var record: Dictionary = {}
+	var fish := target as Fish
+	var item := target as Decor
+	if fish != null:
+		record = {"what": "fish", "species": fish.species,
+			"position": fish.global_position, "age": fish.age}
+		_detach(fish)
+	elif item != null:
+		record = {"what": "decor", "kind": item.kind, "position": item.global_position}
+		_detach_decor(item)
+	else:
+		var pellet := target as Food
+		record = {"what": "food", "position": pellet.global_position}
+		_detach_food(pellet)
+
+	_history.note_removed(record, was_id)
+	_note_undo_state()
+	return target
+
+## The closest thing to `position` that the player may remove, or null.
+##
+## Scored on distance relative to each candidate's own grab radius rather than on
+## distance alone, so a shark is not always chosen over the clownfish under the finger
+## purely by being bigger. Pellets are checked first so one resting against a fish goes
+## before the fish, which is the order they are drawn in.
+func _nearest_editable(position: Vector2, reach: float) -> Node2D:
+	var best: Node2D = null
+	# Ratios above 1 are out of reach, so this both seeds the search and is the cutoff.
+	var best_score := 1.0
+
+	for pellet in _food:
+		var score := position.distance_to(pellet.global_position) / reach
+		if score <= best_score:
+			best_score = score
+			best = pellet
+
+	for fish in _fish:
+		var grab := maxf(reach, fish.half_length())
+		var score := position.distance_to(fish.global_position) / grab
+		if score <= best_score:
+			best_score = score
+			best = fish
+
+	for item in _decor:
+		# Decor is rooted at its base and stands upward, so the whole plant is the
+		# target — measuring to its origin would mean tapping a kelp's foot exactly.
+		var rect := _decor_rect(item)
+		var score := position.distance_to(position.clamp(rect.position, rect.end)) / reach
+		if score <= best_score:
+			best_score = score
+			best = item
+
+	return best
+
+## The rectangle a decor item occupies, running upward from the point it was planted.
+func _decor_rect(item: Decor) -> Rect2:
+	var aspect := 1.0
+	var texture := item.kind.texture
+	if texture != null and texture.get_size().y > 0.0:
+		aspect = texture.get_size().x / texture.get_size().y
+	var half_width := item.kind.size * aspect * 0.5
+	return Rect2(
+		item.global_position - Vector2(half_width, item.kind.size),
+		Vector2(half_width * 2.0, item.kind.size))
+
+## Takes back the last thing the player placed, or puts back the last thing they
+## removed. Returns false when there is nothing left to undo.
+##
+## An entry naming a fish that has since been eaten is not an error and not a no-op: it
+## is dropped and the one before it is used, so the button always undoes the most recent
+## thing it still can.
+func undo() -> bool:
+	var entry := _history.take()
+	if entry.is_empty():
+		_note_undo_state()
+		return false
+
+	if entry.get("action") == TankHistory.Action.ADDED:
+		var node: Node2D = entry.get("node")
+		var fish := node as Fish
+		var item := node as Decor
+		if fish != null:
+			_detach(fish)
+		elif item != null:
+			_detach_decor(item)
+		else:
+			_detach_food(node as Food)
+		_note_undo_state()
+		return true
+
+	var restored: Node2D = null
+	match entry.get("what", ""):
+		"fish":
+			restored = spawn(entry["species"], entry["position"], entry["age"])
+		"decor":
+			restored = place_decor(entry["kind"], entry["position"])
+		"food":
+			restored = drop_food(entry["position"])
+	# The object is back but it is a new instance, so any older entry that placed the
+	# original has to be re-pointed at it or "place, delete, undo, undo" would leave it.
+	_history.replace_node(int(entry.get("was_id", 0)), restored)
+	_note_undo_state()
+	return restored != null
+
+func can_undo() -> bool:
+	return _history.can_undo()
+
+func _note_undo_state() -> void:
+	var available := _history.can_undo()
+	if available == _undo_available:
+		return
+	_undo_available = available
+	undo_changed.emit(available)
 
 ## Drops one pellet. It sinks until a hungry fish reaches it or it dissolves.
 func drop_food(position: Vector2) -> Food:
@@ -256,15 +410,17 @@ func set_feeding(on: bool) -> void:
 	feeding = on
 	if on:
 		selected_decor = null
+		removing = false
+
+## Arms deletion: the next tap takes something out instead of putting something in.
+func set_removing(on: bool) -> void:
+	removing = on
+	if on:
+		selected_decor = null
+		feeding = false
 
 func _on_food_consumed(pellet: Food) -> void:
-	var index := _food.find(pellet)
-	if index == -1:
-		return
-	_food.remove_at(index)
-	food_layer.remove_child(pellet)
-	pellet.queue_free()
-	food_changed.emit(_food.size())
+	_detach_food(pellet)
 
 ## Adds one decor item at `position`.
 func place_decor(kind: DecorKind, position: Vector2) -> Decor:
@@ -308,6 +464,7 @@ func select_species(species: FishSpecies) -> void:
 		return
 	selected_decor = null
 	feeding = false
+	removing = false
 	if selected_species == species:
 		return
 	selected_species = species
@@ -316,6 +473,7 @@ func select_species(species: FishSpecies) -> void:
 func select_decor(kind: DecorKind) -> void:
 	selected_decor = kind
 	feeding = false
+	removing = false
 
 func set_paused(paused: bool) -> void:
 	if _paused == paused:
@@ -346,21 +504,57 @@ func clear_tank() -> void:
 		fish_layer.remove_child(f)
 		f.queue_free()
 	_fish.clear()
+	# Every entry named a node that is now gone, and a REMOVED entry would put a fish
+	# back into a tank that was deliberately emptied.
+	_history.clear()
+	_note_undo_state()
 	population_changed.emit(0)
 
 func _on_fish_eaten(fish: Fish) -> void:
 	_remove(fish, false)
 
-func _remove(fish: Fish, of_old_age: bool) -> void:
+## Takes a fish out of the tank without calling it a death.
+##
+## `fish_died` means the ecosystem lost a fish — to a predator or to age — and the
+## simulation tests count predation from it. A fish the player deleted is neither, so
+## removal and dying share the bookkeeping and not the signal.
+func _detach(fish: Fish) -> bool:
 	var index := _fish.find(fish)
 	if index == -1:
-		return
-	var species := fish.species
+		return false
 	_fish.remove_at(index)
 	fish_layer.remove_child(fish)
 	fish.queue_free()
-	fish_died.emit(species, of_old_age)
 	population_changed.emit(_fish.size())
+	return true
+
+func _detach_decor(item: Decor) -> bool:
+	var index := _decor.find(item)
+	if index == -1:
+		return false
+	_decor.remove_at(index)
+	item.get_parent().remove_child(item)
+	item.queue_free()
+	_rebuild_shelter()
+	decor_changed.emit(_decor.size())
+	return true
+
+func _detach_food(pellet: Food) -> bool:
+	if pellet == null:
+		return false
+	var index := _food.find(pellet)
+	if index == -1:
+		return false
+	_food.remove_at(index)
+	food_layer.remove_child(pellet)
+	pellet.queue_free()
+	food_changed.emit(_food.size())
+	return true
+
+func _remove(fish: Fish, of_old_age: bool) -> void:
+	var species := fish.species
+	if _detach(fish):
+		fish_died.emit(species, of_old_age)
 
 ## Scales the backdrop to cover the tank without distorting it.
 func _fit_background() -> void:

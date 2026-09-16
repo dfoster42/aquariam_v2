@@ -55,6 +55,56 @@ A tap and a drag share one finger, so a press stays provisional until it either 
 past `DRAG_SLOP` or is released still enough and soon enough to count as a tap. Only the
 release spawns.
 
+## Undo, and removing things
+
+The picker's last tile arms **Remove**: the next tap takes out the nearest fish, plant or
+pellet. The **undo** button in the top bar takes back the last thing placed — or puts
+back the last thing removed.
+
+Undo is a stack of **actions, not snapshots**. The tank is a running simulation, so a
+fish placed a minute ago may since have bred, been eaten, or died of old age. Restoring a
+saved state would make undo silently revive everything that had died in between, which
+is a much stranger promise than the button makes. An entry instead says "this object was
+added" or "this object was removed, here is what it was", and undoing one takes the
+object back out or puts it back.
+
+Three things fall out of that, and each is a test in `edit_test`:
+
+**An entry can go stale, and that is not an error.** A fish eaten before it could be
+undone is gone; the entry is dropped and the button undoes the most recent thing it still
+can. Staleness is `is_inside_tree()`, not `is_instance_valid()` — removal detaches on the
+spot, while a queued free stays "valid" until the end of the frame.
+
+**Undoing a removal creates a new instance**, so any older entry naming the original is
+re-pointed at it. Without that, "place a fish, delete it, undo, undo" leaves the fish in
+the tank: the second undo would find an entry naming the freed original, judge it stale,
+and drop it.
+
+**Only the player's own taps are recorded.** Breeding and restoring both go through
+`spawn()`, so recording happens in `place_selected()` — a tank that bred while nobody was
+looking would otherwise fill the stack with fish the player never placed.
+
+Removing a fish does not emit `fish_died`. That signal means the *ecosystem* lost a fish,
+and the simulation tests count predation from it; a fish the player deleted is neither
+eaten nor old, so removal and dying share the bookkeeping and not the signal.
+
+The grab radius is in **screen** units and converted by the camera's zoom
+(`CameraRig.world_per_screen_unit()`). A finger is a fixed size on the glass while the
+world under it is not: at the widest zoom one screen unit is about eight world units, at
+the tightest about a third of one, so a world-space constant would grab a fish three body
+lengths away when zoomed out and miss the one under the finger zoomed in. A tap that
+reaches nothing removes nothing.
+
+Candidates are scored on distance relative to their own grab radius rather than on
+distance alone, so a shark is not picked over the clownfish under the finger purely by
+being bigger. Plants are measured against the rectangle they occupy, because decor is
+rooted at its base and stands upward — measuring to its origin would mean tapping a
+kelp's foot exactly.
+
+Undo is in memory only. It is not saved, and `clear_tank()` empties it: every entry names
+a node that is gone, and restoring a removal into a deliberately emptied tank would be a
+surprise.
+
 ## Feeding
 
 Arm **Feed** in the picker and tap to drop pellets. They sink, hungry fish break off to
@@ -187,7 +237,7 @@ A headless functional check of spawning, movement, tank bounds and predation:
 godot --headless --script res://test/smoke_test.gd
 ```
 
-Nine files, all run by CI:
+Ten files, all run by CI:
 
 | test | covers |
 | --- | --- |
@@ -199,6 +249,7 @@ Nine files, all run by CI:
 | `ecosystem_test` | 15 simulated minutes; the tank must neither die out nor run away |
 | `feeding_test` | pellets sink, hungry fish eat, full fish and sharks ignore them, hunger slows breeding |
 | `settings_test` | the mute survives a relaunch |
+| `edit_test` | undo, remove mode, and what must NOT be undoable |
 | `shelter_test` | prey hides in cover, and does not flee the cover it is already in |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each

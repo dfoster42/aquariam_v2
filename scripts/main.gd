@@ -42,7 +42,10 @@ func _notification(what: int) -> void:
 			aquarium.save()
 
 func _on_tapped(world_position: Vector2) -> void:
-	var placed := aquarium.place_selected(world_position)
+	# The tank works in world units and a finger is a fixed size on the glass, so the
+	# grab radius for remove mode is converted here, where the camera's zoom is known.
+	var placed := aquarium.place_selected(
+		world_position, Aquarium.REMOVE_REACH * camera.world_per_screen_unit())
 	if placed is Food:
 		plop.play()
 

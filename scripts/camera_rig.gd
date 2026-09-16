@@ -115,6 +115,11 @@ func _on_wheel(event: InputEventMouseButton) -> void:
 	elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 		_apply_zoom(_target_zoom / WHEEL_STEP)
 
+## World units per screen unit at the current zoom. A fixed distance on the glass is
+## this many units in the tank — about eight zoomed out, about a third zoomed in.
+func world_per_screen_unit() -> float:
+	return 1.0 / maxf(zoom.x, 0.001)
+
 func to_world(screen_position: Vector2) -> Vector2:
 	return get_canvas_transform().affine_inverse() * screen_position
 
