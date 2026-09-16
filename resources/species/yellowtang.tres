@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="FishSpecies" format=3]
+
+[ext_resource type="Script" path="res://scripts/fish_species.gd" id="1_gqx4x"]
+[ext_resource type="Texture2D" path="res://assets/textures/yellowtang.png" id="2_wcdlu"]
+
+[resource]
+script = ExtResource("1_gqx4x")
+display_name = "Yellow Tang"
+texture = ExtResource("2_wcdlu")
+speed = 92.0
+size = 40.0
+sight = 260.0
+lifespan = 1900.0
+maturity = 26.0
+breed_cooldown = 24.0
+breed_distance = 175.0
+capacity = 26
+starting_count = 10
+hunger_time = 560.0
+hungry_below = 0.6

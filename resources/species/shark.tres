@@ -1,17 +1,20 @@
 [gd_resource type="Resource" script_class="FishSpecies" format=3]
 
-[ext_resource type="Script" path="res://scripts/fish_species.gd" id="1_ueko5"]
-[ext_resource type="Resource" path="res://resources/species/clownfish.tres" id="2_iwbeh"]
-[ext_resource type="Resource" path="res://resources/species/anemonefish.tres" id="3_hbhaa"]
-[ext_resource type="Texture2D" path="res://assets/textures/shark.png" id="4_1jvpi"]
+[ext_resource type="Script" path="res://scripts/fish_species.gd" id="1_hbhaa"]
+[ext_resource type="Resource" path="res://resources/species/clownfish.tres" id="2_1jvpi"]
+[ext_resource type="Resource" path="res://resources/species/anemonefish.tres" id="3_wi56p"]
+[ext_resource type="Resource" path="res://resources/species/angelfish.tres" id="4_nd2sn"]
+[ext_resource type="Resource" path="res://resources/species/yellowtang.tres" id="5_6fwx3"]
+[ext_resource type="Texture2D" path="res://assets/textures/shark.png" id="6_doguf"]
 
 [resource]
-script = ExtResource("1_ueko5")
+script = ExtResource("1_hbhaa")
 display_name = "Shark"
-texture = ExtResource("4_1jvpi")
+texture = ExtResource("6_doguf")
 speed = 86.0
 size = 90.0
 sight = 150.0
 maturity = 40.0
 capacity = 12
-eats = Array[ExtResource("1_ueko5")]([ExtResource("2_iwbeh"), ExtResource("3_hbhaa")])
+hunger_time = 0.0
+eats = Array[ExtResource("1_hbhaa")]([ExtResource("2_1jvpi"), ExtResource("3_wi56p"), ExtResource("4_nd2sn"), ExtResource("5_6fwx3")])

@@ -40,7 +40,16 @@ func _begin() -> void:
 	_tank.fish_died.connect(func(_s: FishSpecies, old: bool) -> void:
 		if not old: _eaten += 1)
 
-	_check(_tank.available_species.size() == 3, "expected 3 species, got %d" % _tank.available_species.size())
+	# Not a magic number: the scene's list is the source of truth, so this checks it is
+	# populated and free of duplicates rather than asserting a count that every new
+	# species would break.
+	_check(_tank.available_species.size() >= 3,
+		"expected at least 3 species, got %d" % _tank.available_species.size())
+	var seen_species: Array[String] = []
+	for species: FishSpecies in _tank.available_species:
+		_check(not seen_species.has(species.resource_path),
+			"species %s is listed twice" % species.display_name)
+		seen_species.append(species.resource_path)
 	# Derived, not hardcoded: seeding follows each species' starting_count, so a tuning
 	# change should not read as a test failure.
 	var seeded := 0
@@ -152,17 +161,28 @@ func _check_persistence() -> void:
 	_check(other.population() == before.size(),
 		"restored %d fish, expected %d" % [other.population(), before.size()])
 
-	var drift := 0.0
-	var restored: Array[Fish] = _tank_fish(other)
-	restored.sort_custom(func(a: Fish, b: Fish) -> bool: return a.global_position.x < b.global_position.x)
-	var expected := before.duplicate()
-	expected.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["pos"].x < b["pos"].x)
-	for i in mini(restored.size(), expected.size()):
-		drift = maxf(drift, restored[i].global_position.distance_to(expected[i]["pos"]))
-		if restored[i].species.resource_path != expected[i]["species"]:
-			_check(false, "restored fish %d is the wrong species" % i)
-	# Positions are stored as whole pixels, so a sub-pixel difference is expected.
-	_check(drift <= 1.5, "restored positions drifted by %.2f px" % drift)
+	# Compare as sets, not as two lists paired by sorted x.
+	#
+	# Pairing by a single coordinate mis-matches as soon as two fish share an x, which
+	# is common once a tank holds dozens — the earlier version reported "restored fish
+	# 18 is the wrong species" purely because the pairing had slipped.
+	var expected_keys: Array[String] = []
+	for entry: Dictionary in before:
+		expected_keys.append("%s@%d,%d" % [
+			entry["species"], roundi(entry["pos"].x), roundi(entry["pos"].y)])
+	var restored_keys: Array[String] = []
+	for f in other.fish():
+		restored_keys.append("%s@%d,%d" % [
+			f.species.resource_path, roundi(f.global_position.x), roundi(f.global_position.y)])
+	expected_keys.sort()
+	restored_keys.sort()
+
+	var missing := 0
+	for key in expected_keys:
+		if not restored_keys.has(key):
+			missing += 1
+	_check(missing == 0, "%d of %d fish did not come back at the same species and place"
+		% [missing, expected_keys.size()])
 
 	# A save naming a species the build no longer has must cost that fish, not the tank.
 	var salted := data.duplicate(true)

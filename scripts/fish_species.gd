@@ -36,6 +36,15 @@ extends Resource
 ## any of them can pair.
 @export_range(0, 100, 1) var starting_count: int = 3
 
+@export_group("Appetite")
+## Seconds from full to starving. 0 means the species never gets hungry — which is how
+## a predator stays driven by prey rather than by pellets.
+@export_range(0.0, 1200.0, 5.0) var hunger_time: float = 240.0
+## Below this fraction of full, a fish will break off what it is doing to chase food.
+@export_range(0.0, 1.0, 0.05) var hungry_below: float = 0.65
+## A fish that stays at zero for this long dies. 0 means hunger never kills.
+@export_range(0.0, 1200.0, 10.0) var starve_time: float = 0.0
+
 @export_group("Diet")
 ## Species this fish hunts. The reverse (who hunts this fish) is derived at
 ## runtime by Aquarium, so predator/prey never fall out of sync.

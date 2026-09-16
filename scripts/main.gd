@@ -5,8 +5,12 @@ extends Node2D
 ## only a tap once the camera has ruled out a drag, so spawning has to be driven
 ## from there rather than from the tank's own _unhandled_input.
 
+const MUTE_PATH: String = "user://audio.cfg"
+
 @onready var aquarium: Aquarium = $Aquarium
 @onready var camera: CameraRig = $CameraRig
+@onready var ambient: AudioStreamPlayer = $Ambient
+@onready var plop: AudioStreamPlayer = $Plop
 
 func _ready() -> void:
 	camera.setup(aquarium.bounds())
@@ -14,6 +18,11 @@ func _ready() -> void:
 	# Desktop closes via the window; a phone usually just suspends the app and may
 	# never deliver a close request at all, so backgrounding has to save too.
 	get_tree().auto_accept_quit = false
+
+	var config := ConfigFile.new()
+	if config.load(MUTE_PATH) == OK:
+		AudioServer.set_bus_mute(
+			AudioServer.get_bus_index("Master"), bool(config.get_value("audio", "muted", false)))
 
 func _notification(what: int) -> void:
 	var names := {
@@ -33,4 +42,17 @@ func _notification(what: int) -> void:
 			aquarium.save()
 
 func _on_tapped(world_position: Vector2) -> void:
-	aquarium.place_selected(world_position)
+	var placed := aquarium.place_selected(world_position)
+	if placed is Food:
+		plop.play()
+
+## Muting is remembered across launches: a player who turned the sound off did not mean
+## "until next time".
+func set_muted(muted: bool) -> void:
+	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), muted)
+	var config := ConfigFile.new()
+	config.set_value("audio", "muted", muted)
+	config.save(MUTE_PATH)
+
+func is_muted() -> bool:
+	return AudioServer.is_bus_mute(AudioServer.get_bus_index("Master"))

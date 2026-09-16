@@ -16,9 +16,13 @@ signal fish_died(species: FishSpecies, of_old_age: bool)
 signal species_selected(species: FishSpecies)
 signal paused_changed(paused: bool)
 signal decor_changed(count: int)
+signal food_changed(count: int)
 
 const FISH_SCENE: PackedScene = preload("res://scenes/fish.tscn")
 const DECOR_SCENE: PackedScene = preload("res://scenes/decor.tscn")
+const FOOD_SCENE: PackedScene = preload("res://scenes/food.tscn")
+## Food is cheap but not free, and a held finger can drop a lot of it.
+const MAX_FOOD: int = 250
 ## Refuse to spawn beyond this; keeps a stray tap-and-hold from hanging the app.
 const MAX_POPULATION: int = 1500
 
@@ -52,12 +56,16 @@ const MAX_POPULATION: int = 1500
 @export var backdrop_tint: Color = Color.WHITE
 
 var selected_species: FishSpecies
-## What a tap places. Either a species or a decor kind; never both.
+## What a tap places. A species, a decor kind, or food — never more than one.
 var selected_decor: DecorKind
+var feeding: bool = false
 
 var _fish: Array[Fish] = []
 var _decor: Array[Decor] = []
+var _food: Array[Food] = []
 var _shelter_hash: SpatialHash
+## Food sinks, so unlike decor its grid is rebuilt every frame.
+var _food_hash: SpatialHash
 var _predator_map: Dictionary = {}
 var _hash: SpatialHash
 var _bounds: Rect2 = Rect2()
@@ -68,6 +76,7 @@ var _since_autosave: float = 0.0
 @onready var fish_layer: Node2D = $FishLayer
 @onready var decor_back: Node2D = $DecorBack
 @onready var decor_front: Node2D = $DecorFront
+@onready var food_layer: Node2D = $FoodLayer
 
 func _ready() -> void:
 	available_species = available_species.filter(func(s: FishSpecies) -> bool: return s != null)
@@ -82,6 +91,7 @@ func _ready() -> void:
 	_predator_map = _derive_predators(available_species)
 	_hash = SpatialHash.new(_largest_sight())
 	_shelter_hash = SpatialHash.new(_largest_shelter())
+	_food_hash = SpatialHash.new(_largest_sight())
 	selected_species = available_species[0]
 
 	background.modulate = backdrop_tint
@@ -109,8 +119,14 @@ func _process(delta: float) -> void:
 	for fish in _fish:
 		_hash.insert(fish)
 	_mark_sheltered()
+
+	_food_hash.clear()
+	for pellet in _food:
+		pellet.tick(step)
+		_food_hash.insert(pellet)
+
 	for fish in _fish:
-		fish.tick(step, _hash, _shelter_hash)
+		fish.tick(step, _hash, _shelter_hash, _food_hash)
 	_reap()
 	_breed()
 
@@ -145,7 +161,7 @@ func _mark_sheltered() -> void:
 ## both fire in a frame.
 func _reap() -> void:
 	for fish in _fish.duplicate():
-		if fish.is_past_lifespan():
+		if fish.is_past_lifespan() or fish.is_starved():
 			_remove(fish, true)
 
 ## Pairs adults of the same species and spawns one offspring per pair.
@@ -211,9 +227,41 @@ func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 
 ## Places whatever the picker currently has selected. What a tap on the tank calls.
 func place_selected(position: Vector2) -> Node2D:
+	if feeding:
+		return drop_food(position)
 	if selected_decor != null:
 		return place_decor(selected_decor, position)
 	return spawn(selected_species, position)
+
+## Drops one pellet. It sinks until a hungry fish reaches it or it dissolves.
+func drop_food(position: Vector2) -> Food:
+	if not is_node_ready() or _food.size() >= MAX_FOOD:
+		return null
+	var pellet: Food = FOOD_SCENE.instantiate()
+	pellet.configure(_bounds)
+	pellet.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	pellet.consumed.connect(_on_food_consumed)
+	food_layer.add_child(pellet)
+	_food.append(pellet)
+	food_changed.emit(_food.size())
+	return pellet
+
+func food() -> Array[Food]:
+	return _food.duplicate()
+
+func set_feeding(on: bool) -> void:
+	feeding = on
+	if on:
+		selected_decor = null
+
+func _on_food_consumed(pellet: Food) -> void:
+	var index := _food.find(pellet)
+	if index == -1:
+		return
+	_food.remove_at(index)
+	food_layer.remove_child(pellet)
+	pellet.queue_free()
+	food_changed.emit(_food.size())
 
 ## Adds one decor item at `position`.
 func place_decor(kind: DecorKind, position: Vector2) -> Decor:
@@ -256,6 +304,7 @@ func select_species(species: FishSpecies) -> void:
 	if species == null:
 		return
 	selected_decor = null
+	feeding = false
 	if selected_species == species:
 		return
 	selected_species = species
@@ -263,6 +312,7 @@ func select_species(species: FishSpecies) -> void:
 
 func select_decor(kind: DecorKind) -> void:
 	selected_decor = kind
+	feeding = false
 
 func set_paused(paused: bool) -> void:
 	if _paused == paused:

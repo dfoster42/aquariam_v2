@@ -46,6 +46,17 @@ A tap and a drag share one finger, so a press stays provisional until it either 
 past `DRAG_SLOP` or is released still enough and soon enough to count as a tap. Only the
 release spawns.
 
+## Feeding
+
+Arm **Feed** in the picker and tap to drop pellets. They sink, hungry fish break off to
+chase them, and eating refills the fish. Sharks ignore food entirely — `hunger_time` 0
+means never hungry, so they stay driven by prey.
+
+**Hunger does not kill.** Starvation would punish an ambient app for the thing ambient
+apps are for, and a tank that dies out unattended is a tank nobody reopens. A hungry fish
+breeds half as often instead, so feeding is a reward for attention rather than a tax on
+absence.
+
 ## Life cycle
 
 Fish age. Age drives size, so juveniles are visibly smaller, and it drives breeding and
@@ -199,7 +210,7 @@ the whole restore.
 | macOS | exports; universal `x86_64 arm64` |
 | iOS simulator | **works**, after patching the export template — see below |
 | iOS device | builds `arm64`; needs a paid Apple developer account to sign |
-| Android | not attempted; needs a JDK and the Android SDK |
+| Android | **works**; APK runs on an emulator, OpenGL ES 3.1 |
 
 ### iOS simulator needs a patched export template
 
@@ -264,6 +275,28 @@ where **0 is iPhone, 1 is iPad and 2 is both** — setting it to `1` expecting i
 produces `TARGETED_DEVICE_FAMILY = "2"` and Xcode then offers no iPhone destinations at
 all. And `application/app_store_team_id="0000000000"` is a placeholder so the exporter
 will run; it is not a real team ID and must be replaced before any signed build.
+
+### Android
+
+Builds and runs. The toolchain installs entirely in user space, so none of it needs a
+password:
+
+```bash
+# JDK 17 to ~/.jdks/temurin17, Android SDK to ~/Library/Android/sdk
+# then point Godot at both in editor_settings-4.6.tres:
+#   export/android/android_sdk_path, export/android/java_sdk_path,
+#   export/android/debug_keystore (+ _user / _pass)
+godot --headless --export-debug "Android" build/android/Aquarium.apk
+adb install -r build/android/Aquarium.apk
+```
+
+Two traps worth knowing. Godot's editor settings are versioned — 4.6 reads
+`editor_settings-4.6.tres`, and writing `editor_settings-4.tres` gets you "A valid Java
+SDK path is required" with a perfectly valid JDK sitting at the path you set. And a debug
+keystore has to exist; `keytool -genkeypair` makes one.
+
+Verified on a Pixel 7 emulator running Android 14: the app launches, reports
+`OnGodotMainLoopStarted`, picks OpenGL ES 3.1, and runs the full tank at 94 fish.
 
 ### A renderer note
 

@@ -29,6 +29,8 @@ func _initialize() -> void:
 	clownfish.breed_distance = 170.0
 	clownfish.capacity = 46
 	clownfish.starting_count = 20
+	clownfish.hunger_time = 600.0
+	clownfish.hungry_below = 0.6
 	clownfish.lifespan = 1800.0
 	_save(clownfish, "clownfish")
 
@@ -38,8 +40,34 @@ func _initialize() -> void:
 	anemonefish.breed_distance = 170.0
 	anemonefish.capacity = 34
 	anemonefish.starting_count = 14
+	anemonefish.hunger_time = 660.0
+	anemonefish.hungry_below = 0.6
 	anemonefish.lifespan = 2100.0
 	_save(anemonefish, "anemonefish")
+
+	var angelfish := _make("Angelfish", "res://assets/textures/angelfish.png", 66.0, 52.0, 210.0)
+	angelfish.maturity = 34.0
+	angelfish.breed_cooldown = 30.0
+	angelfish.breed_distance = 160.0
+	angelfish.capacity = 22
+	angelfish.starting_count = 8
+	angelfish.lifespan = 2400.0
+	angelfish.hunger_time = 700.0
+	angelfish.hungry_below = 0.6
+	_save(angelfish, "angelfish")
+
+	# Small, quick and skittish: the hardest of the prey for a shark to run down, and
+	# the one that most obviously uses cover.
+	var yellowtang := _make("Yellow Tang", "res://assets/textures/yellowtang.png", 92.0, 40.0, 260.0)
+	yellowtang.maturity = 26.0
+	yellowtang.breed_cooldown = 24.0
+	yellowtang.breed_distance = 175.0
+	yellowtang.capacity = 26
+	yellowtang.starting_count = 10
+	yellowtang.lifespan = 1900.0
+	yellowtang.hunger_time = 560.0
+	yellowtang.hungry_below = 0.6
+	_save(yellowtang, "yellowtang")
 
 	# breed_distance 0: sharks never pair. A predator that breeds on the same terms as
 	# its prey overruns the tank, and arriving only by tap keeps the player in charge
@@ -52,10 +80,15 @@ func _initialize() -> void:
 	shark.breed_distance = 0.0
 	shark.capacity = 12
 	shark.starting_count = 3
+	# Sharks are driven by prey, not pellets: hunger_time 0 means never hungry, so they
+	# ignore food and keep hunting.
+	shark.hunger_time = 0.0
 	shark.lifespan = 0.0
 	shark.eats = [
 		load("res://resources/species/clownfish.tres"),
 		load("res://resources/species/anemonefish.tres"),
+		load("res://resources/species/angelfish.tres"),
+		load("res://resources/species/yellowtang.tres"),
 	]
 	_save(shark, "shark")
 

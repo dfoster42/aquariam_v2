@@ -16,3 +16,5 @@ breed_cooldown = 22.0
 breed_distance = 170.0
 capacity = 46
 starting_count = 20
+hunger_time = 600.0
+hungry_below = 0.6

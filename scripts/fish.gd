@@ -7,7 +7,7 @@ extends Node2D
 
 signal eaten(fish: Fish)
 
-enum Behaviour { WANDER, HUNT, FLEE, HIDE }
+enum Behaviour { WANDER, HUNT, FLEE, HIDE, FEED }
 
 const ARRIVE_DISTANCE: float = 24.0
 ## How close a predator's MOUTH must come to prey to eat it — not its centre.
@@ -39,6 +39,10 @@ var _breed_timer: float = 0.0
 ## derived from the sprite teleported a full body length across the fish. A shark could
 ## then "bite" prey that was behind its tail.
 var _facing: Vector2 = Vector2.LEFT
+
+## How full the fish is, 0..1. Drains over `hunger_time`; eating refills it.
+var fullness: float = 1.0
+var _starving_for: float = 0.0
 
 ## Whether this fish is currently inside a plant's cover. Set once per frame by the
 ## Aquarium rather than worked out per predator, so a fish with ten hunters near it
@@ -79,22 +83,24 @@ func set_bounds(bounds: Rect2) -> void:
 
 ## Advances this fish by `delta` seconds. `hash` must already contain every
 ## other fish in the tank for this frame.
-func tick(delta: float, hash: SpatialHash, shelter: SpatialHash = null) -> void:
+func tick(delta: float, hash: SpatialHash, shelter: SpatialHash = null,
+		food: SpatialHash = null) -> void:
 	if _is_eaten:
 		return
 
 	age += delta
 	_breed_timer = maxf(0.0, _breed_timer - delta)
+	_tick_hunger(delta)
 	_apply_size()
 
-	var heading := _decide_heading(hash, shelter)
+	var heading := _decide_heading(hash, shelter, food)
 	if heading != Vector2.ZERO:
 		global_position += heading * species.speed * delta
 		_face(heading, delta)
 
 	global_position = _clamp_to_bounds(global_position)
 
-func _decide_heading(hash: SpatialHash, shelter: SpatialHash) -> Vector2:
+func _decide_heading(hash: SpatialHash, shelter: SpatialHash, food: SpatialHash = null) -> Vector2:
 	var neighbours := hash.query_radius(global_position, species.sight, self)
 
 	var nearest_threat: Fish = _nearest_of(neighbours, _predators)
@@ -118,12 +124,26 @@ func _decide_heading(hash: SpatialHash, shelter: SpatialHash) -> Vector2:
 			return global_position.direction_to(refuge.global_position)
 		return nearest_threat.global_position.direction_to(global_position)
 
+	# Hungry and nothing chasing it: go for the nearest pellet. Checked after fleeing,
+	# because a fish should not swim into a shark's mouth for a snack.
+	if is_hungry():
+		var pellet := _nearest_food(food)
+		if pellet != null:
+			behaviour = Behaviour.FEED
+			if mouth_position().distance_to(pellet.global_position) <= BITE_DISTANCE + Food.RADIUS:
+				pellet.be_eaten()
+				feed()
+				return Vector2.ZERO
+			var aim := pellet.global_position - facing() * half_length()
+			return global_position.direction_to(aim)
+
 	var nearest_prey: Fish = _nearest_of(neighbours, species.eats)
 	if nearest_prey != null:
 		# Mouth to the prey's body, so a catch happens where it looks like one.
 		var reach := BITE_DISTANCE + nearest_prey.half_length()
 		if mouth_position().distance_to(nearest_prey.global_position) <= reach:
 			nearest_prey.be_eaten()
+			feed(1.0)
 			behaviour = Behaviour.WANDER
 			_target = _random_point()
 			return Vector2.ZERO
@@ -177,11 +197,50 @@ func facing() -> Vector2:
 func mouth_position() -> Vector2:
 	return global_position + facing() * half_length()
 
+func _tick_hunger(delta: float) -> void:
+	if species.hunger_time <= 0.0:
+		return
+	fullness = maxf(0.0, fullness - delta / species.hunger_time)
+	if fullness > 0.0:
+		_starving_for = 0.0
+		return
+	_starving_for += delta
+
+func is_hungry() -> bool:
+	return species.hunger_time > 0.0 and fullness < species.hungry_below
+
+## Whether the fish has been empty long enough to die of it.
+func is_starved() -> bool:
+	return species.starve_time > 0.0 and _starving_for > species.starve_time
+
+func feed(amount: float = 0.5) -> void:
+	fullness = minf(1.0, fullness + amount)
+	_starving_for = 0.0
+
+func _nearest_food(food: SpatialHash) -> Food:
+	if food == null:
+		return null
+	var best: Food = null
+	var best_distance_sq := INF
+	for node: Node2D in food.query_radius(global_position, species.sight, null):
+		var pellet := node as Food
+		if pellet == null or pellet.is_eaten():
+			continue
+		var d := global_position.distance_squared_to(pellet.global_position)
+		if d < best_distance_sq:
+			best_distance_sq = d
+			best = pellet
+	return best
+
 ## A fish is grown at `maturity` and no smaller than a third of adult size at birth.
 func growth() -> float:
 	if species.maturity <= 0.0:
 		return 1.0
 	return clampf(0.34 + 0.66 * (age / species.maturity), 0.34, 1.0)
+
+## Seconds until this fish could breed again.
+func breed_wait() -> float:
+	return _breed_timer
 
 func is_mature() -> bool:
 	return age >= species.maturity
@@ -190,8 +249,14 @@ func is_mature() -> bool:
 func can_breed() -> bool:
 	return (not _is_eaten) and species.breed_distance > 0.0 and is_mature() and _breed_timer <= 0.0
 
+## Hunger does not kill; it slows breeding.
+##
+## Starvation would punish an ambient app for the thing ambient apps are for — being
+## left alone — and a tank that dies out while nobody is watching is a tank nobody comes
+## back to. A hungry fish still breeds, just half as often, so feeding is a reward for
+## attention rather than a tax on absence.
 func note_bred() -> void:
-	_breed_timer = species.breed_cooldown
+	_breed_timer = species.breed_cooldown * (2.0 if is_hungry() else 1.0)
 
 func is_past_lifespan() -> bool:
 	return species.lifespan > 0.0 and age > species.lifespan

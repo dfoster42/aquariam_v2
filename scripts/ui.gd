@@ -20,6 +20,7 @@ var _group := ButtonGroup.new()
 
 @onready var safe: MarginContainer = $Root/Safe
 @onready var population_label: Label = $Root/Safe/Stack/TopBar/Population
+@onready var sound_button: Button = $Root/Safe/Stack/TopBar/Sound
 @onready var tanks_button: Button = $Root/Safe/Stack/TopBar/Tanks
 @onready var pause_button: Button = $Root/Safe/Stack/TopBar/Pause
 @onready var tank_panel: PanelContainer = $Root/Safe/Stack/TankPanel
@@ -34,6 +35,8 @@ func _ready() -> void:
 
 	pause_button.pressed.connect(_aquarium.toggle_paused)
 	tanks_button.pressed.connect(_toggle_tank_panel)
+	sound_button.pressed.connect(_toggle_sound)
+	_refresh_sound_button()
 	_aquarium.paused_changed.connect(_on_paused_changed)
 	_aquarium.population_changed.connect(_on_population_changed)
 	_aquarium.species_selected.connect(_on_species_selected)
@@ -43,6 +46,14 @@ func _ready() -> void:
 
 	get_viewport().size_changed.connect(_apply_safe_area)
 	_apply_safe_area()
+
+func _toggle_sound() -> void:
+	var main := get_parent()
+	main.set_muted(not main.is_muted())
+	_refresh_sound_button()
+
+func _refresh_sound_button() -> void:
+	sound_button.text = "Sound off" if get_parent().is_muted() else "Sound on"
 
 func _toggle_tank_panel() -> void:
 	tank_panel.visible = not tank_panel.visible
@@ -72,13 +83,19 @@ func _build_tank_list() -> void:
 		open.pressed.connect(_switch_to.bind(id))
 		row.add_child(open)
 
+		var rename := Button.new()
+		rename.text = "Rename"
+		rename.focus_mode = Control.FOCUS_NONE
+		rename.pressed.connect(_begin_rename.bind(id))
+		row.add_child(rename)
+
 		var remove := Button.new()
 		remove.text = "Delete"
 		remove.focus_mode = Control.FOCUS_NONE
 		# Never offer to delete the only tank: it would leave the app with nowhere to
 		# save and the next launch would silently make a fresh one.
 		remove.disabled = TankStore.slots().size() <= 1
-		remove.pressed.connect(_delete.bind(id))
+		remove.pressed.connect(_confirm_delete.bind(id, slot.get("name", id)))
 		row.add_child(remove)
 
 		tank_list.add_child(row)
@@ -105,6 +122,45 @@ func _create() -> void:
 	if id == "":
 		return
 	_reload()
+
+## Deleting a tank destroys years of a player's fish in one tap, so it asks first.
+func _confirm_delete(slot_id: String, name: String) -> void:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Delete aquarium"
+	dialog.dialog_text = "Delete \"%s\" and every fish in it?\n\nThis cannot be undone." % name
+	dialog.ok_button_text = "Delete"
+	dialog.confirmed.connect(_delete.bind(slot_id))
+	dialog.visibility_changed.connect(func() -> void:
+		if not dialog.visible:
+			dialog.queue_free())
+	add_child(dialog)
+	dialog.popup_centered()
+
+func _begin_rename(slot_id: String) -> void:
+	var current := slot_id
+	for slot: Variant in TankStore.slots():
+		if slot.get("id", "") == slot_id:
+			current = str(slot.get("name", slot_id))
+
+	var dialog := AcceptDialog.new()
+	dialog.title = "Rename aquarium"
+	var field := LineEdit.new()
+	field.text = current
+	field.custom_minimum_size = Vector2(260, 0)
+	field.select_all()
+	dialog.add_child(field)
+	dialog.ok_button_text = "Rename"
+	dialog.confirmed.connect(func() -> void:
+		var name := field.text.strip_edges()
+		if name != "":
+			TankStore.rename_slot(slot_id, name)
+			_build_tank_list())
+	dialog.visibility_changed.connect(func() -> void:
+		if not dialog.visible:
+			dialog.queue_free())
+	add_child(dialog)
+	dialog.popup_centered()
+	field.grab_focus()
 
 func _delete(slot_id: String) -> void:
 	var was_active := slot_id == TankStore.active_slot()
@@ -137,6 +193,10 @@ func _build_picker() -> void:
 		var button := _picker_button(kind.display_name)
 		button.pressed.connect(_aquarium.select_decor.bind(kind))
 		picker.add_child(button)
+
+	var feed := _picker_button("Feed")
+	feed.pressed.connect(_aquarium.set_feeding.bind(true))
+	picker.add_child(feed)
 
 ## One group across fish and decor, so arming a plant disarms the fish and a tap can
 ## only ever place one kind of thing.

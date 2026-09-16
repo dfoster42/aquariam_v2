@@ -35,6 +35,11 @@ size_flags_horizontal = 3
 mouse_filter = 2
 text = "0 fish"
 
+[node name="Sound" type="Button" parent="Root/Safe/Stack/TopBar"]
+layout_mode = 2
+focus_mode = 0
+text = "Sound on"
+
 [node name="Tanks" type="Button" parent="Root/Safe/Stack/TopBar"]
 layout_mode = 2
 focus_mode = 0

@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="FishSpecies" format=3]
+
+[ext_resource type="Script" path="res://scripts/fish_species.gd" id="1_vufad"]
+[ext_resource type="Texture2D" path="res://assets/textures/angelfish.png" id="2_fbusn"]
+
+[resource]
+script = ExtResource("1_vufad")
+display_name = "Angelfish"
+texture = ExtResource("2_fbusn")
+speed = 66.0
+size = 52.0
+sight = 210.0
+lifespan = 2400.0
+maturity = 34.0
+breed_cooldown = 30.0
+breed_distance = 160.0
+capacity = 22
+starting_count = 8
+hunger_time = 700.0
+hungry_below = 0.6
