@@ -83,14 +83,25 @@ func _place_decor() -> void:
 	else:
 		print("placed %d plants" % _tank.decor().size())
 
+## Fills the tank in the proportions it actually settles at, not one of each in turn.
+##
+## Round-robin across the species list made one spawned fish in five a shark. The tank
+## then ate itself faster than it could be filled — the run stalled around 580 fish
+## against a target of 1500 — so every number measured a collapsing tank rather than a
+## populated one.
 func _fill_to(target: int) -> void:
-	var species := _tank.available_species
 	var bounds := _tank.bounds()
+	var weighted: Array[FishSpecies] = []
+	for species: FishSpecies in _tank.available_species:
+		for i in maxi(1, species.capacity):
+			weighted.append(species)
+	if weighted.is_empty():
+		return
+
 	var guard := 0
-	while _tank.population() < target and guard < target * 2:
+	while _tank.population() < target and guard < target * 4:
 		guard += 1
-		var pick: FishSpecies = species[_tank.population() % species.size()]
-		_tank.spawn(pick, Vector2(
+		_tank.spawn(weighted[guard % weighted.size()], Vector2(
 			randf_range(bounds.position.x, bounds.end.x),
 			randf_range(bounds.position.y, bounds.end.y)))
 

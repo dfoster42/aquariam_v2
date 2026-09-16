@@ -6,28 +6,36 @@ A rewrite of an earlier Go/Fyne prototype. Fyne capped out around 50 fish at 6 H
 
 ## Measured performance
 
-`tools/benchmark.gd`, vsync disabled, Apple M5 Pro desktop, Compatibility renderer:
+`tools/benchmark.gd`, vsync disabled, Apple M5 Pro desktop, Compatibility renderer,
+against the shipping build — five species, the 3240x2160 map:
 
 | fish | mean frame | fps |
 | ---: | ---: | ---: |
-| 50 | 1.10 ms | 912 |
-| 100 | 1.75 ms | 572 |
-| 197 | 3.66 ms | 273 |
-| 347 | 8.48 ms | 118 |
-| 524 | 16.85 ms | 59 |
-| 781 | 30.97 ms | 32 |
-| 1069 | 49.26 ms | 20 |
+| 54 | 0.90 ms | 1107 |
+| 99 | 1.48 ms | 677 |
+| 198 | 2.21 ms | 453 |
+| 372 | 4.59 ms | 218 |
+| 634 | 9.61 ms | 104 |
+| 818 | 17.10 ms | 58 |
 
-Roughly **520 fish at 60 fps** on this machine. Phones will be lower; that number has
-not been measured on device yet.
+**About 630 fish at 60 fps**, and 20 plants costs nothing measurable — the ceiling is the
+same with and without them.
 
 Cost grows around n^1.5, not linearly. That is density rather than a defect in the
-spatial grid: the tank is a fixed size, so doubling the population doubles how many
-neighbours fall inside each fish's sight radius. The grid stops each fish scanning
-*every* other fish; it cannot stop the tank getting crowded.
+spatial grid: the map is a fixed size, so doubling the population doubles how many
+neighbours fall inside each fish's sight radius.
+
+**These are desktop numbers and nothing else.** A real phone has not been measured: iOS
+needs a signing identity and the Android emulator renders through SwiftShader, a software
+rasteriser, so its frame times mean nothing about hardware.
+
+The benchmark fills the tank in the proportions it actually settles at, weighted by each
+species' capacity. Cycling the species list round-robin instead made one spawned fish in
+five a shark, and the tank ate itself faster than it could be filled — a run targeting
+1500 stalled near 580, so every number described a collapsing tank.
 
 ```bash
-godot --script res://tools/benchmark.gd
+godot --script res://tools/benchmark.gd            # add -- --decor N for plants
 ```
 
 ## Running
@@ -107,13 +115,8 @@ Each plant's phase comes from its own world position, read from `MODEL_MATRIX` i
 still batch, while no two sway together. A duplicated material per plant carrying a
 random phase would break batching for the same result.
 
-Measured with `tools/benchmark.gd -- --decor N` on an M5 Pro, vsync off:
-
-| plants | fish held at 60 fps |
-| ---: | ---: |
-| 0 | 901 |
-| 20 | 970 |
-| 80 | ~520 |
+Measured on an M5 Pro with vsync off: the 60 fps ceiling is the same at 0 plants and
+at 20, and 80 plants roughly halves it.
 
 The shader itself is free: at matched fish counts, sway on versus off measured 9.35 vs
 9.47 ms, 16.76 vs 15.91 ms and 24.64 vs 22.77 ms — inside the noise and the differing
@@ -172,21 +175,29 @@ A headless functional check of spawning, movement, tank bounds and predation:
 godot --headless --script res://test/smoke_test.gd
 ```
 
-Five files, all run by CI:
+Nine files, all run by CI:
 
 | test | covers |
 | --- | --- |
 | `smoke_test` | spawning, movement, bounds, predation, pause, selection, tap-to-spawn, safe-area insets, save/restore round trip |
 | `bite_test` | a predator catches with its mouth, not its centre or its tail |
+| `slots_test` | slots, switching, renaming, deletion, migration |
 | `offline_test` | the offline population model in isolation |
 | `offline_restore_test` | a real absence, including one longer than any fish lives |
 | `ecosystem_test` | 15 simulated minutes; the tank must neither die out nor run away |
+| `feeding_test` | pellets sink, hungry fish eat, full fish and sharks ignore them, hunger slows breeding |
+| `settings_test` | the mute survives a relaunch |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each
 writing to the same save made the suite flaky — a run would fail three checks and then
 pass unchanged on the next invocation.
 
-CI runs it on every push and pull request. Note that `godot --script` exits **0** on a
+**Not covered by tests:** the Android build (verified by hand on an emulator, not in CI —
+the runner would need the whole SDK), and the delete-confirmation dialog, which is a
+Godot `ConfirmationDialog` and cannot be driven headlessly. `slots_test` covers the
+store-level delete and rename it wraps.
+
+CI runs the suite on every push and pull request. Note that `godot --script` exits **0** on a
 script parse error — measured, not assumed — so a broken test file would otherwise pass
 silently. The workflow greps for the test's own `RESULT: PASS` line; that is what
 actually gates the build.
