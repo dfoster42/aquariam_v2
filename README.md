@@ -46,9 +46,10 @@ Open the project in Godot 4.6 and press F5, or:
 godot --path . res://scenes/aquarium.tscn
 ```
 
-Tap (or click) the tank to drop a fish of the selected species. Drag to pan, pinch to
-zoom (mouse wheel on desktop). The bottom row picks a species; the top bar shows the
-population and pauses the tank.
+Tap (or click) the tank to place whatever the picker has armed. Drag to pan, pinch to
+zoom (mouse wheel on desktop). The dock along the bottom is a scrolling strip of tiles —
+each species, each plant, and Feed — and the line above it says in words what a tap on
+the water will do. The top bar shows the population, and mutes, switches tank, or pauses.
 
 A tap and a drag share one finger, so a press stays provisional until it either moves
 past `DRAG_SLOP` or is released still enough and soon enough to count as a tap. Only the
@@ -187,10 +188,16 @@ Nine files, all run by CI:
 | `ecosystem_test` | 15 simulated minutes; the tank must neither die out nor run away |
 | `feeding_test` | pellets sink, hungry fish eat, full fish and sharks ignore them, hunger slows breeding |
 | `settings_test` | the mute survives a relaunch |
+| `shelter_test` | prey hides in cover, and does not flee the cover it is already in |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each
 writing to the same save made the suite flaky — a run would fail three checks and then
 pass unchanged on the next invocation.
+
+The smoke test's UI checks are the ones that catch an overhaul: every visible control
+inside the viewport, every blocking control declared in `ui_blocker`, the middle of the
+tank tappable, the switcher closed at launch, and the safe-area arithmetic — including
+the desktop-shaped safe area that must be capped rather than obeyed.
 
 **Not covered by tests:** the Android build (verified by hand on an emulator, not in CI —
 the runner would need the whole SDK), and the delete-confirmation dialog, which is a
@@ -318,6 +325,86 @@ worth knowing before shipping to the App Store, and a released iOS build probabl
 `gl_compatibility` — but note that this would end simulator testing, since Metal is
 exactly what the simulator cannot do.
 
+## Interface
+
+Everything the controls are made of comes from one generated theme,
+`resources/ui/aquarium_theme.tres`. It is written by `tools/generate_theme.gd` rather
+than authored, for the same reason the species resources are: a `StyleBoxFlat`
+serialises to two dozen opaque keys and an exported array of them cannot be hand-written
+at all. **Edit that script and re-run it** — editing the `.tres` is editing a build
+artefact.
+
+```bash
+godot --headless --script res://tools/generate_theme.gd
+```
+
+The palette is the app icon's: deep water, and the accent is the icon's clownfish
+orange. Every surface is translucent, because the tank is the content — an opaque bar
+over it would be a chrome app with an aquarium inside rather than an aquarium with
+controls floating on it.
+
+### Sizes are in points, not units
+
+The project lays out in a 720-unit-wide viewport and ships to a phone about 400 points
+wide, so **one unit is about 0.56 of a point**. This is not a detail. Sized as though a
+unit were a pixel, the 48-unit buttons measured **27 points** across on an iPhone 17
+Pro — every control was around 60% of the size it looked in a desktop window, and the
+body font came out under 10 points. The theme now writes its metrics in points and
+converts through `UNITS_PER_POINT`, so they can be checked against a human-factors
+guideline (44pt minimum touch target) instead of against a screenshot.
+
+The lesson generalises: **a desktop window at a different scale is not a preview.** Both
+of the sizing bugs above looked correct in the 540x960 window and wrong on the phone.
+
+### The picker scrolls, and its tiles pass touches
+
+The roster is eight entries and growing; a row of text buttons stopped fitting a phone's
+width at six. The strip is a `ScrollContainer`, and each tile sets
+`MOUSE_FILTER_PASS` rather than the `Button` default of STOP — a control that stops the
+press keeps every later event in the gesture too, so a swipe beginning on a tile (which
+is most of the strip) never reaches the `ScrollContainer` and the picker could not be
+scrolled by the only means a phone has. Verified on the simulator: the same drag scrolls
+with PASS and does nothing with STOP.
+
+### Blocking taps is declared, not assumed
+
+A `Control` defaults to `MOUSE_FILTER_STOP`, and one full-rect container left at the
+default silently swallows every tap meant for the tank — fish just stop spawning, with
+no error. Containers that must not block set `mouse_filter = 2` (IGNORE).
+
+Some controls block on purpose: the dock, the population chip, the switcher. Those join
+the **`ui_blocker` group**, and `test/smoke_test.gd` asserts that every visible blocking
+control is declared *and* that the blockers together leave the middle of the screen
+tappable — declaring one is not enough, or a dock that grew to fill the view would pass
+by being honest about it.
+
+### Safe area is only asked of handhelds
+
+`DisplayServer.get_display_safe_area()` means "the part of the screen a notch does not
+cover" on iOS and Android. On macOS it means the screen minus the menu bar and the
+Dock — 66 and 180 in screen pixels, wherever the window happens to be. Fed into the
+layout that produced a 330-unit-tall control bar over a 1280-unit tank.
+
+So `TankUI` asks only on iOS and Android, and `safe_insets` additionally caps each inset
+at 12% of that screen dimension. An iPhone 15 Pro's notch and home indicator are 5.5%
+each, so the cap is generous for anything a phone reports and rejects a platform that
+means something else by the phrase.
+
+The dock's *panel* is deliberately not inset: the bar runs to the bottom of the glass,
+under the home indicator, and only its contents step up out of the way. Insetting the
+panel too leaves a strip of bare tank below a floating bar.
+
+### Looking at it
+
+```bash
+godot --script res://tools/screenshot.gd -- --out-dir /tmp/shots
+```
+
+Runs the tank in a window, lets it settle, and captures three states — the tank, the
+picker scrolled to its end, and the switcher — in one run. Several shots per run rather
+than one relaunch each, because the controls are only worth judging over moving water
+and a fresh tank behind every shot makes two of them impossible to compare.
+
 ## Layout notes
 
 The tank is a map — 3240x2160 world units, several screens wide — not the viewport. The
@@ -356,11 +443,6 @@ the near floor, or they read as pale slabs lying on top of the landscape.
 
 Populations scale with the map: it is roughly 3.4x the area of the original
 single-screen tank, so the same on-screen density needs proportionally more fish.
-
-Every layout container in `ui.tscn` sets `mouse_filter = 2` (IGNORE). A `Control`
-defaults to STOP, and one full-rect container left at the default silently swallows
-every tap meant for the tank — fish just stop spawning, with no error. The smoke test
-asserts this.
 
 `backdrop_tint` multiplies into the backdrop and is white by default. It briefly held a
 dimming colour to make the original photograph survivable behind flat vector fish; the
@@ -439,6 +521,24 @@ the shark's grey back and the clownfish's white bands with it.
 
 **Every sprite faces left.** `scripts/fish.gd` mirrors a fish swimming right, so art
 drawn facing right will swim backwards.
+
+**The UI glyphs are drawn too.** `tools/art/draw_ui_icons.py` writes the speaker, pause,
+play, tank, close, feed and fish glyphs to `assets/textures/ui/` as flat white on
+transparent, so the theme tints them and nothing here has to know about a disabled or
+accented state. A speaker and a pause bar are geometry, and a generated one comes back
+at a different weight every time.
+
+```bash
+python3 tools/art/draw_ui_icons.py
+```
+
+Each is drawn at 4x and reduced with Lanczos; PIL's `ellipse` and `polygon` are
+hard-edged and a 48px speaker drawn directly is a staircase on a phone. Two were
+re-drawn after looking at them at the size they are actually used: the switcher's first
+glyph was two offset rounded rectangles, which is the universal *copy* icon and read as
+exactly that, and the population chip's fish was an ellipse with a triangle stuck to it,
+which reads as a **video camera** at 26px. Points at both ends — the body is the overlap
+of two circles — and a punched-out eye are what make it a fish.
 
 ## Layout
 

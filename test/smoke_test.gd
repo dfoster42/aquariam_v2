@@ -74,28 +74,49 @@ func _begin() -> void:
 	for fish in _tank.fish():
 		_start_positions[fish] = fish.global_position
 
-## Nothing VISIBLE may swallow a tap meant for the tank. A Control defaults to
-## MOUSE_FILTER_STOP, and one full-rect container left at the default silently eats
-## every tap: fish stop spawning and nothing reports an error.
+## Nothing VISIBLE may swallow a tap meant for the tank unless it says so.
 ##
-## Scoped to what is visible in the tree, because a panel that deliberately covers the
-## tank — the tank switcher — is *supposed* to block while it is open, or the player
-## spawns fish through it while choosing an aquarium. The invariant that matters is that
-## nothing blocks in the app's normal, panel-closed state.
+## A Control defaults to MOUSE_FILTER_STOP, and one full-rect container left at the
+## default silently eats every tap: fish stop spawning and nothing reports an error.
+##
+## Some controls block on purpose — the dock the picker scrolls inside, the population
+## chip, the switcher that covers the tank while it is open. Those declare it by joining
+## the `ui_blocker` group, so the check is "is this deliberate?" rather than "is this a
+## Button?". Declaring one is not enough on its own: the blockers together must still
+## leave the middle of the screen tappable, or a dock that grew to fill the view would
+## pass this by being honest about it.
 func _check_ui_passes_touches() -> void:
-	var swallowing: Array[String] = []
+	var undeclared: Array[String] = []
+	var blockers: Array[Rect2] = []
 	var queue: Array[Node] = [_ui]
 	while not queue.is_empty():
 		var node: Node = queue.pop_back()
 		queue.append_array(node.get_children())
 		var control := node as Control
-		if control == null or control is Button or not control.is_visible_in_tree():
+		if control == null or not control.is_visible_in_tree():
 			continue
-		if control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
-			swallowing.append(control.name)
-	_check(swallowing.is_empty(), "UI nodes would swallow tank taps: %s" % ", ".join(swallowing))
+		if control.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+			continue
+		if control is Button:
+			continue
+		if not control.is_in_group("ui_blocker"):
+			undeclared.append(control.name)
+		blockers.append(control.get_global_rect())
+	_check(undeclared.is_empty(),
+		"UI nodes swallow tank taps without declaring it: %s" % ", ".join(undeclared))
+
+	# The centre of the screen is where a player taps to drop a fish. Nothing may be
+	# over it in the app's normal, panel-closed state.
+	var view := Rect2(Vector2.ZERO, _ui.get_viewport().get_visible_rect().size)
+	var centre := view.get_center()
+	var covering: Array[String] = []
+	for rect in blockers:
+		if rect.has_point(centre):
+			covering.append(str(rect))
+	_check(covering.is_empty(), "the middle of the tank is covered by %s" % ", ".join(covering))
+
 	# And the switcher must start closed, or the app opens onto a panel.
-	var panel := _ui.get_node_or_null("Root/Safe/Stack/TankPanel") as Control
+	var panel := _ui.get_node_or_null("Root/Sheet") as Control
 	_check(panel != null and not panel.visible, "the tank switcher should start hidden")
 
 ## Every control must lie inside the viewport. A safe-area inset measured against the
@@ -135,6 +156,19 @@ func _check_safe_insets() -> void:
 	var offset: Vector4 = TankUI.safe_insets(
 		Rect2i(1512, 0, 1512, 982), Vector2(1512, 0), Vector2(1512, 982))
 	_check(offset == Vector4.ZERO, "offset-screen insets should be zero, got %s" % offset)
+
+	# A desktop-style safe area, which means something else entirely: macOS reports the
+	# screen minus the menu bar and the Dock, 66 and 180 on a 982px screen. Uncapped,
+	# that 180 became a 330px-tall control bar over a 1280px tank. The cap is what keeps
+	# a platform that means something else by "safe area" from eating the layout — and
+	# _apply_safe_area does not ask a desktop in the first place.
+	var macos: Vector4 = TankUI.safe_insets(
+		Rect2i(0, 66, 1512, 736), Vector2.ZERO, Vector2(1512, 982))
+	var ceiling := 982.0 * TankUI.MAX_INSET_FRACTION
+	_check(macos.is_equal_approx(Vector4(0, 66, 0, ceiling)),
+		"macOS insets should cap at %.1f, got %s" % [ceiling, macos])
+	_check(not TankUI.platform_has_cutouts() or OS.get_name() in ["iOS", "Android"],
+		"only the handhelds should report cutouts, not %s" % OS.get_name())
 
 	# A platform reporting nothing must not produce negative margins.
 	var empty: Vector4 = TankUI.safe_insets(Rect2i(0, 0, 0, 0), Vector2.ZERO, Vector2(800, 600))

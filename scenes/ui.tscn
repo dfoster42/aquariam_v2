@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui.gd" id="1_ui"]
+[ext_resource type="Theme" path="res://resources/ui/aquarium_theme.tres" id="2_theme"]
 
 [node name="UI" type="CanvasLayer"]
 script = ExtResource("1_ui")
@@ -10,6 +11,7 @@ layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+theme = ExtResource("2_theme")
 mouse_filter = 2
 
 [node name="Safe" type="MarginContainer" parent="Root"]
@@ -22,49 +24,192 @@ mouse_filter = 2
 [node name="Stack" type="VBoxContainer" parent="Root/Safe"]
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 14
 
 [node name="TopBar" type="HBoxContainer" parent="Root/Safe/Stack"]
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 14
 
-[node name="Population" type="Label" parent="Root/Safe/Stack/TopBar"]
+[node name="PopulationChip" type="PanelContainer" parent="Root/Safe/Stack/TopBar" groups=["ui_blocker"]]
+layout_mode = 2
+size_flags_vertical = 4
+theme_type_variation = &"Chip"
+
+[node name="ChipBox" type="HBoxContainer" parent="Root/Safe/Stack/TopBar/PopulationChip"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 14
+
+[node name="FishIcon" type="TextureRect" parent="Root/Safe/Stack/TopBar/PopulationChip/ChipBox"]
+custom_minimum_size = Vector2(27, 27)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+unique_name_in_owner = true
+
+[node name="Population" type="Label" parent="Root/Safe/Stack/TopBar/PopulationChip/ChipBox"]
+layout_mode = 2
+size_flags_vertical = 1
+mouse_filter = 2
+text = "0 fish"
+unique_name_in_owner = true
+
+[node name="Gap" type="Control" parent="Root/Safe/Stack/TopBar"]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
-text = "0 fish"
 
 [node name="Sound" type="Button" parent="Root/Safe/Stack/TopBar"]
+custom_minimum_size = Vector2(80, 80)
 layout_mode = 2
+size_flags_vertical = 4
 focus_mode = 0
-text = "Sound on"
+theme_type_variation = &"IconButton"
+unique_name_in_owner = true
 
 [node name="Tanks" type="Button" parent="Root/Safe/Stack/TopBar"]
+custom_minimum_size = Vector2(80, 80)
 layout_mode = 2
+size_flags_vertical = 4
 focus_mode = 0
-text = "Tanks"
+theme_type_variation = &"IconButton"
+unique_name_in_owner = true
 
 [node name="Pause" type="Button" parent="Root/Safe/Stack/TopBar"]
+custom_minimum_size = Vector2(80, 80)
 layout_mode = 2
+size_flags_vertical = 4
 focus_mode = 0
-text = "Pause"
+theme_type_variation = &"IconButton"
+unique_name_in_owner = true
 
-[node name="Spacer" type="Control" parent="Root/Safe/Stack"]
+[node name="Water" type="Control" parent="Root/Safe/Stack"]
 layout_mode = 2
 size_flags_vertical = 3
 mouse_filter = 2
 
-[node name="TankPanel" type="PanelContainer" parent="Root/Safe/Stack"]
-visible = false
-layout_mode = 2
+[node name="Dock" type="PanelContainer" parent="Root" groups=["ui_blocker"]]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_type_variation = &"Dock"
 
-[node name="TankList" type="VBoxContainer" parent="Root/Safe/Stack/TankPanel"]
+[node name="DockSafe" type="MarginContainer" parent="Root/Dock"]
 layout_mode = 2
-theme_override_constants/separation = 6
-
-[node name="Picker" type="HBoxContainer" parent="Root/Safe/Stack"]
-layout_mode = 2
-alignment = 1
 mouse_filter = 2
-theme_override_constants/separation = 8
+unique_name_in_owner = true
+
+[node name="DockStack" type="VBoxContainer" parent="Root/Dock/DockSafe"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 11
+
+[node name="Hint" type="Label" parent="Root/Dock/DockSafe/DockStack"]
+layout_mode = 2
+mouse_filter = 2
+theme_type_variation = &"Caption"
+text = "Tap the water"
+horizontal_alignment = 1
+unique_name_in_owner = true
+
+[node name="PickerScroll" type="ScrollContainer" parent="Root/Dock/DockSafe/DockStack" groups=["ui_blocker"]]
+layout_mode = 2
+follow_focus = true
+horizontal_scroll_mode = 1
+vertical_scroll_mode = 0
+unique_name_in_owner = true
+
+[node name="Picker" type="HBoxContainer" parent="Root/Dock/DockSafe/DockStack/PickerScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = 14
+unique_name_in_owner = true
+
+[node name="Sheet" type="Control" parent="Root"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="Scrim" type="ColorRect" parent="Root/Sheet" groups=["ui_blocker"]]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.0235294, 0.0705882, 0.117647, 0.66)
+
+[node name="SheetSafe" type="MarginContainer" parent="Root/Sheet"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_constants/margin_left = 29
+theme_override_constants/margin_top = 29
+theme_override_constants/margin_right = 29
+theme_override_constants/margin_bottom = 29
+unique_name_in_owner = true
+
+[node name="Centre" type="CenterContainer" parent="Root/Sheet/SheetSafe"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Card" type="PanelContainer" parent="Root/Sheet/SheetSafe/Centre" groups=["ui_blocker"]]
+custom_minimum_size = Vector2(540, 0)
+layout_mode = 2
+theme_type_variation = &"Sheet"
+
+[node name="CardStack" type="VBoxContainer" parent="Root/Sheet/SheetSafe/Centre/Card"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 25
+
+[node name="Header" type="HBoxContainer" parent="Root/Sheet/SheetSafe/Centre/Card/CardStack"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Root/Sheet/SheetSafe/Centre/Card/CardStack/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+mouse_filter = 2
+theme_type_variation = &"Title"
+text = "Aquariums"
+
+[node name="Close" type="Button" parent="Root/Sheet/SheetSafe/Centre/Card/CardStack/Header"]
+custom_minimum_size = Vector2(68, 68)
+layout_mode = 2
+size_flags_vertical = 4
+focus_mode = 0
+theme_type_variation = &"IconButton"
+unique_name_in_owner = true
+
+[node name="ListScroll" type="ScrollContainer" parent="Root/Sheet/SheetSafe/Centre/Card/CardStack" groups=["ui_blocker"]]
+layout_mode = 2
+horizontal_scroll_mode = 0
+vertical_scroll_mode = 1
+unique_name_in_owner = true
+
+[node name="TankList" type="VBoxContainer" parent="Root/Sheet/SheetSafe/Centre/Card/CardStack/ListScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = 14
+unique_name_in_owner = true
+
+[node name="NewTank" type="Button" parent="Root/Sheet/SheetSafe/Centre/Card/CardStack"]
+layout_mode = 2
+focus_mode = 0
+text = "New aquarium"
+unique_name_in_owner = true
