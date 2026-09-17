@@ -369,6 +369,23 @@ func _test_seated_on_floor() -> void:
 			airborne += 1
 	_check(airborne == 0, "%d colonies are not seated on the floor after spreading" % airborne)
 
+	# Nothing that DRAWS a rooted structure may hang in open water. A pelagic faction
+	# owns no structure at all, so it must not be drawing the seabed sprite — that put
+	# anemones back in the middle of the ocean after the colonies themselves had been
+	# seated, which is a regression the eye catches and no assertion did.
+	var shoal := _faction(tank, "Deep Blue")
+	if shoal != null:
+		var drifting := tank.plant_colony(shoal, Vector2(1500.0, 400.0), 60.0)
+		if drifting != null:
+			_check(not drifting.sprite.visible,
+				"a pelagic colony draws a rooted sprite in open water")
+	for colony in tank.colonies():
+		if not colony.sprite.visible:
+			continue
+		_check(absf(colony.global_position.y - seabed.height_at(colony.global_position.x)) <= 1.0,
+			"a colony drawing a sprite sits %.0f units off the floor"
+				% absf(colony.global_position.y - seabed.height_at(colony.global_position.x)))
+
 	# And no fish is ever inside the ground, over a real run.
 	var stuck := 0
 	for i in 240:

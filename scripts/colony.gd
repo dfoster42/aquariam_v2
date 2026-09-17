@@ -79,6 +79,14 @@ func _ready() -> void:
 	if faction == null:
 		push_error("Colony added without a faction; call configure() first.")
 		return
+	# A shoal has no structure. By definition a pelagic faction "owns a band of open
+	# water and nothing permanent", so drawing it as a rooted anemone contradicted the
+	# rule it is built on — and it put the floating anemones back in the middle of the
+	# ocean, which is the exact thing seating the colonies was meant to fix. Its claim
+	# is the band, and the fish it releases are what you actually see.
+	sprite.visible = is_benthic()
+	if not sprite.visible:
+		return
 	# Additive-ish tint rather than a flat modulate: the artwork is a dark anemone and
 	# a straight multiply by a saturated colour turns every faction into the same
 	# near-black smudge.
@@ -266,7 +274,7 @@ func _die() -> void:
 	died.emit(self)
 
 func _apply_size() -> void:
-	if sprite == null or sprite.texture == null:
+	if sprite == null or sprite.texture == null or not sprite.visible:
 		return
 	var texture_size := sprite.texture.get_size()
 	if texture_size.y <= 0.0:

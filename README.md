@@ -343,7 +343,14 @@ basins. Carving picks out three discrete stretches, x 480-880, 1660-2020 and 256
 They are the deepest ground on the map, so a column rising out of one reaches higher than
 anything else in the game. That is the payoff for being confined to 37% of the seabed.
 
-Three things were wrong first, each found by looking at it:
+Four things were wrong first, each found by looking at it:
+
+**A shoal was drawing an anemone in mid-water.** Seating the colonies fixed the benthic
+ones and left the pelagic ones hanging at their band altitude, still drawing the seabed
+sprite — so the floating anemones the whole exercise was meant to remove came straight
+back, in the one place the geometry could not fix them. A pelagic faction owns nothing
+permanent, so it draws nothing: its claim is the band, and the fish it releases are what
+you see. `colony_test` now asserts that anything drawing a sprite is on the floor.
 
 **A column with a flat lid and full-width sides is a rectangle.** It drew as a block of
 colour standing on the seabed. The claim now narrows as it rises — a reef is widest where
