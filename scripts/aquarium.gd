@@ -17,12 +17,17 @@ signal species_selected(species: FishSpecies)
 signal paused_changed(paused: bool)
 signal decor_changed(count: int)
 signal food_changed(count: int)
+## Fires after a territory pass whose ownership differs from the last one.
+signal territory_changed(colonies: int)
+signal colony_founded(faction: Faction)
+signal colony_lost(faction: Faction)
 ## Fires when the undo button should enable or disable.
 signal undo_changed(available: bool)
 
 const FISH_SCENE: PackedScene = preload("res://scenes/fish.tscn")
 const DECOR_SCENE: PackedScene = preload("res://scenes/decor.tscn")
 const FOOD_SCENE: PackedScene = preload("res://scenes/food.tscn")
+const COLONY_SCENE: PackedScene = preload("res://scenes/colony.tscn")
 ## Food is cheap but not free, and a held finger can drop a lot of it.
 const MAX_FOOD: int = 250
 ## Refuse to spawn beyond this; keeps a stray tap-and-hold from hanging the app.
@@ -33,6 +38,30 @@ const MAX_POPULATION: int = 1500
 ## units, at the tightest about a third of one. A world-space constant would grab a fish
 ## three body-lengths away when zoomed out and miss the one under the finger zoomed in.
 const REMOVE_REACH: float = 48.0
+## Colonies a tank may hold. Territory is recomputed against every one of them, and
+## past this the map is a mosaic rather than a set of rival reefs.
+const MAX_COLONIES: int = 40
+## Seconds between territory passes. Territory moves at the speed colonies grow, which
+## is nothing like 60 Hz; recomputing it per frame would be the most expensive thing in
+## the tank and would look identical.
+const TERRITORY_INTERVAL: float = 0.25
+## World radius a strike reaches.
+const STRIKE_RADIUS: float = 360.0
+## Biomass a strike takes out at its centre, falling to nothing at its edge. Tuned so a
+## single hit kills a young colony outright and badly wounds a mature one — a power
+## that only chips at a reef gives the player nothing to watch.
+const STRIKE_POWER: float = 90.0
+## How far a bleach carries past the colony it started on, as a multiple of the two
+## colonies' radii. Above 1.0 it can cross a small gap between neighbours; much above
+## and it jumps to reefs that do not look connected.
+const BLEACH_CONTACT: float = 1.15
+## Fraction of its strength a bleach keeps at each hop. Below about 0.7 it dies out
+## before it reaches the far side of a large faction, which is the whole point of it.
+const BLEACH_DECAY: float = 0.82
+## Bleach strength at the colony it starts on, as a fraction of that colony's biomass.
+## Above 1.0 so the first reef always dies outright — a disaster that leaves its origin
+## standing does not read as a disaster.
+const BLEACH_POWER: float = 1.4
 
 ## Every species the tank can spawn. Populated in the inspector — drop a new
 ## .tres in here and it appears in the picker with no code change. An exported
@@ -43,6 +72,10 @@ const REMOVE_REACH: float = 48.0
 ## Everything the player can place that is not a fish. Same contract as
 ## `available_species`: drop a .tres in and it appears in the picker.
 @export var available_decor: Array[DecorKind] = []
+
+## The reef factions that can hold ground here. Same contract again: one .tres per
+## faction, dropped in, no code.
+@export var available_factions: Array[Faction] = []
 
 ## The tank's size in world units — a map several screens wide, not one screen. The
 ## camera shows a portrait slice of it and pans across; see tools/art/draw_background.py
@@ -69,6 +102,10 @@ var selected_decor: DecorKind
 var feeding: bool = false
 ## Taps take things out instead of putting them in.
 var removing: bool = false
+## Which faction a tap founds a colony for. Null unless a faction tile is armed.
+var selected_faction: Faction
+## Taps call down a strike instead of placing anything.
+var striking: bool = false
 
 var _fish: Array[Fish] = []
 var _decor: Array[Decor] = []
@@ -83,12 +120,17 @@ var _paused: bool = false
 var _since_autosave: float = 0.0
 var _history := TankHistory.new()
 var _undo_available: bool = false
+var _colonies: Array[Colony] = []
+var _territory: Territory
+var _since_territory: float = 0.0
 
 @onready var background: Sprite2D = $Background
 @onready var fish_layer: Node2D = $FishLayer
 @onready var decor_back: Node2D = $DecorBack
 @onready var decor_front: Node2D = $DecorFront
 @onready var food_layer: Node2D = $FoodLayer
+@onready var colony_layer: Node2D = $ColonyLayer
+@onready var territory_layer: Sprite2D = $TerritoryLayer
 
 func _ready() -> void:
 	available_species = available_species.filter(func(s: FishSpecies) -> bool: return s != null)
@@ -106,8 +148,12 @@ func _ready() -> void:
 	_food_hash = SpatialHash.new(_largest_sight())
 	selected_species = available_species[0]
 
+	available_factions = available_factions.filter(func(f: Faction) -> bool: return f != null)
+	_territory = Territory.new(_bounds)
+
 	background.modulate = backdrop_tint
 	_fit_background()
+	_fit_territory()
 
 	# A new aquarium opens EMPTY and the player fills it. There is no seeding step:
 	# restore() simply finds nothing to restore, and the picker's hint line is the
@@ -144,6 +190,7 @@ func _process(delta: float) -> void:
 		fish.tick(step, _hash, _shelter_hash, _food_hash)
 	_reap()
 	_breed()
+	_tick_colonies(step)
 	# A fish the player placed and a shark then ate cannot be un-placed, so the button
 	# has to go dark when the last thing it could undo disappears on its own.
 	_note_undo_state()
@@ -153,6 +200,224 @@ func _process(delta: float) -> void:
 		if _since_autosave >= autosave_interval:
 			_since_autosave = 0.0
 			save()
+
+
+# ------------------------------------------------------------------- colonies
+
+## Grows every colony and refreshes the map a few times a second.
+##
+## Territory is not recomputed per frame. It moves at the speed colonies grow, so a
+## 60 Hz pass would be the most expensive thing in the tank and would look exactly the
+## same as a 4 Hz one.
+func _tick_colonies(delta: float) -> void:
+	if _colonies.is_empty():
+		return
+	for colony: Colony in _colonies.duplicate():
+		colony.tick(delta)
+
+	_since_territory += delta
+	if _since_territory < TERRITORY_INTERVAL:
+		return
+	_since_territory = 0.0
+	_rebuild_territory()
+
+## Recomputes ownership and feeds each colony back the share of ground it holds.
+##
+## The feedback is the whole competition model: a colony that owns the ground it
+## reaches for grows to its faction's capacity, and one boxed in by neighbours stalls.
+## Nothing else arbitrates between colonies, which means what throttles a reef is
+## exactly what the player can see on the map.
+func _rebuild_territory() -> void:
+	if _territory == null:
+		return
+	_territory.rebuild(_colonies)
+	for colony in _colonies:
+		colony.pressure = _territory.pressure_for(colony)
+	territory_layer.texture = _territory.texture()
+	_fit_territory()
+	territory_changed.emit(_colonies.size())
+
+## Stretches the coarse ownership grid over the whole map. Linear filtering on the
+## sprite is what turns 90x60 cells into soft regions instead of a chequerboard.
+func _fit_territory() -> void:
+	if _territory == null or territory_layer == null:
+		return
+	var grid := _territory.grid_size()
+	if grid.x <= 0 or grid.y <= 0:
+		return
+	territory_layer.position = _bounds.position
+	territory_layer.scale = Vector2(
+		_bounds.size.x / float(grid.x), _bounds.size.y / float(grid.y))
+
+## Founds a colony for `faction` at `position`. Returns null when the tank is full or
+## the faction is missing.
+func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1.0) -> Colony:
+	if not is_node_ready() or faction == null or _colonies.size() >= MAX_COLONIES:
+		return null
+	var colony: Colony = COLONY_SCENE.instantiate()
+	colony.configure(faction, start_biomass)
+	colony.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	colony.released.connect(_on_colony_released)
+	colony.spreading.connect(_on_colony_spreading)
+	colony.died.connect(_on_colony_died)
+	colony_layer.add_child(colony)
+	_colonies.append(colony)
+	_rebuild_territory()
+	colony_founded.emit(faction)
+	return colony
+
+## Calls down a strike centred on `position`.
+##
+## Damage falls off linearly to nothing at the edge, so where the player taps is a
+## decision rather than a formality. Returns total biomass destroyed — what a readout
+## would report, and what the test measures.
+func strike(position: Vector2, radius: float = STRIKE_RADIUS,
+		power: float = STRIKE_POWER) -> float:
+	var destroyed := 0.0
+	for colony: Colony in _colonies.duplicate():
+		var distance := colony.global_position.distance_to(position)
+		if distance > radius:
+			continue
+		destroyed += colony.damage(power * (1.0 - distance / radius))
+	if destroyed > 0.0:
+		_rebuild_territory()
+	return destroyed
+
+## Bleaches the reef under `position` and everything of the same faction it touches.
+##
+## A point strike turned out to be a pinprick once factions spread: measured, hitting
+## one colony of a faction holding a third of the map moved that share by 0.8 points,
+## because the faction had a dozen other colonies and none of them cared. A disaster has
+## to travel the same way the thing it is destroying travelled.
+##
+## Spreads only within one faction. A bleaching that crossed between rivals would erase
+## the borders that make the map worth looking at, and the point of the power is to open
+## ground for a rival, not to flatten everyone equally.
+##
+## Returns the biomass destroyed.
+func bleach(position: Vector2, radius: float = STRIKE_RADIUS) -> float:
+	var origin := _nearest_colony(position, radius)
+	if origin == null:
+		return 0.0
+
+	var faction := origin.faction
+	var frontier: Array[Colony] = [origin]
+	var strength: Dictionary = {origin: origin.biomass * BLEACH_POWER}
+	var seen: Dictionary = {origin: true}
+	var destroyed := 0.0
+
+	# Breadth-first across touching colonies of the same faction, losing strength at
+	# each hop, so a bleach burns out somewhere inside a large faction rather than
+	# always taking all of it.
+	while not frontier.is_empty():
+		var current: Colony = frontier.pop_front()
+		var power := float(strength[current])
+		var reach := current.radius()
+		for other in _colonies:
+			if seen.has(other) or other.faction != faction:
+				continue
+			var gap := current.global_position.distance_to(other.global_position)
+			if gap > (reach + other.radius()) * BLEACH_CONTACT:
+				continue
+			seen[other] = true
+			var carried := power * BLEACH_DECAY
+			if carried < Colony.MIN_BIOMASS:
+				continue
+			strength[other] = carried
+			frontier.append(other)
+
+	for colony: Colony in strength:
+		destroyed += colony.damage(float(strength[colony]))
+	if destroyed > 0.0:
+		_rebuild_territory()
+	return destroyed
+
+func _nearest_colony(position: Vector2, radius: float) -> Colony:
+	var best: Colony = null
+	var best_distance := radius
+	for colony in _colonies:
+		var distance := colony.global_position.distance_to(position)
+		if distance <= best_distance:
+			best_distance = distance
+			best = colony
+	return best
+
+## A colony released a fish. It arrives at the colony's edge rather than its centre, so
+## a reef visibly seeds the water around it instead of budding fish out of its middle.
+func _on_colony_released(colony: Colony, position: Vector2) -> void:
+	if colony.faction == null or colony.faction.species == null:
+		return
+	var offset := Vector2.from_angle(randf_range(-PI, PI)) * colony.radius() * 0.8
+	var fish := spawn(colony.faction.species, position + offset, 0.0)
+	if fish != null:
+		fish.set_faction(colony.faction)
+
+## A colony wants to found a daughter. The tank arbitrates, because only it knows who
+## owns the target ground.
+##
+## Refused onto ground another faction already holds: expansion should have to go around
+## a rival or through it, never simply land behind it. Refused inside the tank's own
+## edge margin too, or reefs pile up against the glass where half their territory falls
+## off the map.
+func _on_colony_spreading(parent: Colony, position: Vector2) -> void:
+	if _colonies.size() >= MAX_COLONIES or _territory == null:
+		return
+	var margin := Colony.BASE_RADIUS
+	var inner := Rect2(_bounds.position + Vector2(margin, margin),
+		_bounds.size - Vector2(margin, margin) * 2.0)
+	if not inner.has_point(position):
+		return
+	var holder := _territory.owner_at(position)
+	if holder != null and holder.faction != parent.faction:
+		return
+	var stake := parent.pay_to_spread()
+	if stake <= 0.0:
+		return
+	plant_colony(parent.faction, position, stake)
+
+func _on_colony_died(colony: Colony) -> void:
+	var faction := colony.faction
+	if _detach_colony(colony):
+		colony_lost.emit(faction)
+
+func _detach_colony(colony: Colony) -> bool:
+	var index := _colonies.find(colony)
+	if index == -1:
+		return false
+	_colonies.remove_at(index)
+	colony.get_parent().remove_child(colony)
+	colony.queue_free()
+	_rebuild_territory()
+	return true
+
+func colonies() -> Array[Colony]:
+	return _colonies.duplicate()
+
+func territory() -> Territory:
+	return _territory
+
+func clear_colonies() -> void:
+	for colony in _colonies:
+		colony.get_parent().remove_child(colony)
+		colony.queue_free()
+	_colonies.clear()
+	_rebuild_territory()
+
+func select_faction(faction: Faction) -> void:
+	selected_faction = faction
+	selected_decor = null
+	feeding = false
+	removing = false
+	striking = false
+
+## Arms the strike: the next tap calls one down instead of placing anything.
+func set_striking(on: bool) -> void:
+	striking = on
+	if on:
+		selected_faction = null
+		selected_decor = null
+		feeding = false
+		removing = false
 
 ## Flags every fish that is inside a plant's cover, once per frame.
 ##
@@ -255,9 +520,18 @@ func place_selected(position: Vector2, reach: float = REMOVE_REACH) -> Node2D:
 	if removing:
 		return remove_at(position, reach)
 
+	# A strike destroys rather than places, so it is neither recorded nor undoable: the
+	# reef it took out is gone, the neighbours have already grown into the hole, and
+	# putting the biomass back would not put the map back.
+	if striking:
+		strike(position)
+		return null
+
 	var placed: Node2D = null
 	if feeding:
 		placed = drop_food(position)
+	elif selected_faction != null:
+		placed = plant_colony(selected_faction, position)
 	elif selected_decor != null:
 		placed = place_decor(selected_decor, position)
 	else:
@@ -357,10 +631,13 @@ func undo() -> bool:
 		var node: Node2D = entry.get("node")
 		var fish := node as Fish
 		var item := node as Decor
+		var colony := node as Colony
 		if fish != null:
 			_detach(fish)
 		elif item != null:
 			_detach_decor(item)
+		elif colony != null:
+			_detach_colony(colony)
 		else:
 			_detach_food(node as Food)
 		_note_undo_state()
@@ -410,6 +687,8 @@ func set_feeding(on: bool) -> void:
 	feeding = on
 	if on:
 		selected_decor = null
+		selected_faction = null
+		striking = false
 		removing = false
 
 ## Arms deletion: the next tap takes something out instead of putting something in.
@@ -417,6 +696,8 @@ func set_removing(on: bool) -> void:
 	removing = on
 	if on:
 		selected_decor = null
+		selected_faction = null
+		striking = false
 		feeding = false
 
 func _on_food_consumed(pellet: Food) -> void:
@@ -463,6 +744,8 @@ func select_species(species: FishSpecies) -> void:
 	if species == null:
 		return
 	selected_decor = null
+	selected_faction = null
+	striking = false
 	feeding = false
 	removing = false
 	if selected_species == species:
@@ -472,6 +755,8 @@ func select_species(species: FishSpecies) -> void:
 
 func select_decor(kind: DecorKind) -> void:
 	selected_decor = kind
+	selected_faction = null
+	striking = false
 	feeding = false
 	removing = false
 
@@ -576,7 +861,8 @@ func _fit_background() -> void:
 func restore(data: Dictionary) -> bool:
 	var entries: Array = data.get("fish", [])
 	var decor_entries: Array = data.get("decor", [])
-	if entries.is_empty() and decor_entries.is_empty():
+	var colony_entries: Array = data.get("colonies", [])
+	if entries.is_empty() and decor_entries.is_empty() and colony_entries.is_empty():
 		return false
 
 	# Decor first: plants placed before the fish means a restored tank's shelter is
@@ -590,6 +876,20 @@ func restore(data: Dictionary) -> bool:
 		var kind: DecorKind = decor_by_path.get(entry.get("kind", ""), null)
 		if kind != null:
 			place_decor(kind, Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))))
+
+	# Colonies before fish, for the same reason decor is: a restored tank's map should
+	# be drawn on the first frame rather than a quarter of a second late.
+	var faction_by_path: Dictionary = {}
+	for f in available_factions:
+		faction_by_path[f.resource_path] = f
+	for entry: Variant in colony_entries:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var faction: Faction = faction_by_path.get(entry.get("faction", ""), null)
+		if faction != null:
+			plant_colony(faction,
+				Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))),
+				float(entry.get("biomass", -1.0)))
 
 	var by_path: Dictionary = {}
 	for species in available_species:
@@ -614,7 +914,7 @@ func restore(data: Dictionary) -> bool:
 
 	if skipped > 0:
 		push_warning("Restored %d fish; skipped %d whose species is no longer present." % [restored, skipped])
-	if restored == 0 and not _decor.is_empty():
+	if restored == 0 and (not _decor.is_empty() or not _colonies.is_empty()):
 		return true
 	if restored > 0:
 		_apply_time_away(Offline.elapsed_since(

@@ -49,6 +49,11 @@ var _starving_for: float = 0.0
 ## still only tests its own surroundings once.
 var sheltered: bool = false
 
+## The colony that released this fish, if any. Cosmetic for now — it tints the sprite
+## so a shoal reads as belonging to a reef — but it is the hook a territorial fish
+## would hang off later.
+var faction: Faction
+
 var _predators: Array[FishSpecies] = []
 var _target: Vector2 = Vector2.ZERO
 var _bounds: Rect2 = Rect2()
@@ -77,6 +82,24 @@ func _ready() -> void:
 		return
 	sprite.texture = species.texture
 	_apply_size()
+	_apply_faction_tint()
+
+## Marks this fish as belonging to a faction, tinting it to match.
+##
+## A partial lerp toward the faction colour, not a modulate by it: the sprites are
+## already coloured, and multiplying a clownfish by a saturated green leaves a dark
+## smear that reads as neither clownfish nor green.
+func set_faction(new_faction: Faction) -> void:
+	faction = new_faction
+	_apply_faction_tint()
+
+func _apply_faction_tint() -> void:
+	if sprite == null:
+		return
+	if faction == null:
+		sprite.modulate = Color.WHITE
+		return
+	sprite.modulate = Color.WHITE.lerp(faction.color, 0.45)
 
 func set_bounds(bounds: Rect2) -> void:
 	_bounds = bounds

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="Faction" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction.gd" id="1_faction"]
+[ext_resource type="Resource" path="res://resources/species/angelfish.tres" id="2_species"]
+
+[resource]
+script = ExtResource("1_faction")
+display_name = "Deep Blue"
+color = Color(0.32, 0.55, 0.98, 1)
+species = ExtResource("2_species")
+capacity = 145.0
+growth_rate = 0.045
+biomass_per_fish = 28.0

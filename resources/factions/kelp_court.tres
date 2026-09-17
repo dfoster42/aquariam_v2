@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="Faction" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction.gd" id="1_faction"]
+[ext_resource type="Resource" path="res://resources/species/yellowtang.tres" id="2_species"]
+
+[resource]
+script = ExtResource("1_faction")
+display_name = "Kelp Court"
+color = Color(0.36, 0.85, 0.42, 1)
+species = ExtResource("2_species")
+capacity = 120.0
+growth_rate = 0.055
+biomass_per_fish = 24.0

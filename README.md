@@ -180,6 +180,65 @@ past the sprite's edge at full lean and would otherwise clip the tips.
 Decor is saved with the tank, and restored *before* the fish, so a reloaded tank's
 shelter is in effect on the first frame rather than one frame late.
 
+## Colonies, territory, and the god-sim prototype
+
+An experiment, not a direction that has been committed to. The question it exists to
+answer is narrow: **is any of this worth watching?**
+
+The tank as it stands is unclippable. It is calm, it is pretty, and nothing that happens
+in it changes it — a fish spawns, breeds, is eaten, and the tank afterwards is
+indistinguishable from the tank before. Nothing accumulates, so nothing can be lost, so
+there is no moment worth showing anyone. A colony is the first object here that does
+accumulate.
+
+A `Faction` is a colour and a fish. A `Colony` is one faction's foothold: it holds
+`biomass`, grows logistically, claims ground, releases fish tinted to match, and can be
+destroyed. `Territory` computes who owns what as a 90x60 influence grid over the map and
+paints it as one filtered texture — that layer is the entire reason the rest is legible.
+Without it a disaster kills an object; with it a disaster opens a hole that the
+neighbours visibly flow into.
+
+Three things were wrong on the first try, and each was found by measuring rather than by
+thinking about it.
+
+**Colonies that only grow in place never make a map.** Three reefs left alone held 12.8%
+of the ground each with 61.8% open water between them, and striking one moved its
+neighbours by 0.2 points. They were never touching, so there was no border to redraw.
+Colonies now spread — a mature one with room pays biomass to found a daughter just past
+its own edge — and open water fell to 18.8%.
+
+**A point strike is a pinprick against a faction that has spread.** Bleaching one colony
+of a faction holding a third of the map moved that share by 0.8 points, because the
+faction had a dozen others and none of them cared. A disaster has to travel the way the
+thing it is destroying travelled: `bleach()` runs breadth-first across touching colonies
+of *one* faction, losing strength at each hop. It burns out on purpose — one tap should
+not flatten a map-spanning faction — and it stops dead at a rival's border, because a
+disaster that flattens everyone equally erases the map instead of redrawing it.
+
+**A hard claim threshold is a visible staircase.** The faintest claimed cell drew at
+0.14 alpha against open water's zero, and the whole outer border came out as a cliff
+that no amount of texture filtering could soften. Alpha is now remapped from the claim
+threshold rather than from zero, so it reaches zero exactly where the claim does.
+
+With all three in place: Deep Blue held 32.8% of the map, was bleached for 236 biomass,
+and went to 0.0% while Kelp Court climbed 15.3% to 24.1%. That before-and-after is the
+thing the experiment was for.
+
+```bash
+godot --headless --script res://test/colony_test.gd        # the five checks
+godot --script res://tools/colony_demo.gd -- --out-dir /tmp/shots
+```
+
+The demo fast-forwards through the tank's own `_tick_colonies` rather than waiting for
+frames. The first version of it waited 240 frames — four seconds — for growth that takes
+a minute, photographed three untouched seed colonies, and reported that nothing happened.
+
+**Known gaps.** Colonies are saved with their biomass but offline progression ignores
+them, so a tank left overnight comes back with its map exactly as it was. Remove mode
+does not take out a colony — `strike` and `bleach` are the verbs for that — though undo
+does take back one you just placed. The Strike tile borrows the Remove glyph, and the
+faction tiles borrow the anemone.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:
