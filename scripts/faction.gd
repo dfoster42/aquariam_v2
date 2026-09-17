@@ -19,6 +19,16 @@ extends Resource
 ## ground but never spawns anything.
 @export var species: FishSpecies
 
+@export_group("Claim")
+## Per-axis multiplier on a colony's reach: (lateral, vertical).
+##
+## (1, 1) is the circular claim the prototype shipped with, which is a top-down idiom —
+## measured, a mature colony's claim was a 922-unit disc inside a 1384-unit water column,
+## so it was geometrically incapable of reading as anything but a view from above.
+## Anisotropy is what lets a claim be a crust along the floor (say (3.4, 0.3)) or a plume
+## rising off a vent ((0.55, 2.6)).
+@export var shape: Vector2 = Vector2.ONE
+
 @export_group("Growth")
 ## Biomass a colony of this faction tends toward when nothing is pressing on it.
 @export_range(10.0, 1000.0, 5.0) var capacity: float = 130.0

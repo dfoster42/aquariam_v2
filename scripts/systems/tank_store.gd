@@ -186,6 +186,10 @@ static func capture(tank: Aquarium) -> Dictionary:
 			"x": roundi(colony.global_position.x),
 			"y": roundi(colony.global_position.y),
 			"biomass": snappedf(colony.biomass, 0.01),
+			# Saved because colony.gd's own docstring says age "is what makes a colony
+			# you have had for six minutes a different thing from a fresh one" — and
+			# every relaunch was silently throwing it away.
+			"age": roundi(colony.age),
 		})
 
 	return {

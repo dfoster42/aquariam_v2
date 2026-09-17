@@ -122,13 +122,43 @@ func _tick_spread(delta: float) -> void:
 func radius() -> float:
 	return BASE_RADIUS * sqrt(maxf(biomass, 1.0) / REFERENCE_BIOMASS)
 
-## What this colony projects at `distance`. Falls off as an inverse square in units of
-## its own radius, so two colonies meet where their biomasses balance rather than at a
-## fixed midpoint — a big reef pushes its border into a small neighbour's ground.
-func influence_at(distance: float) -> float:
-	var r := maxf(radius(), 1.0)
-	var ratio := distance / r
-	return biomass / (1.0 + ratio * ratio)
+## What this colony projects at `offset` — a vector FROM the colony TO the point.
+##
+## Takes the whole offset rather than a scalar distance, which is the one change that
+## lets a claim be any shape but a circle. Territory already computed the vector and
+## threw the direction away on the next line; an isotropic claim is a top-down idiom and
+## in a side view it reads as a disc of colour floating in open water, so the direction
+## is exactly the information that was missing.
+##
+## Still falls off as an inverse square, now in units of the colony's per-axis extent, so
+## two colonies meet where their biomasses balance rather than at a fixed midpoint — a
+## big reef pushes its border into a small neighbour's ground.
+func influence_at(offset: Vector2) -> float:
+	var reach := extent()
+	var sx := offset.x / maxf(reach.x, 1.0)
+	var sy := offset.y / maxf(reach.y, 1.0)
+	var influence := biomass / (1.0 + sx * sx + sy * sy)
+
+	# Taper to nothing at the edge of the searched box, or the box IS the claim's shape.
+	#
+	# Territory only visits cells within REACH extents, and an inverse square has not
+	# decayed anywhere near the claim threshold by then: measured at biomass 130, the
+	# influence at the box edge was still 19 against a MIN_CLAIM of 3, so every mature
+	# colony's territory was a hard-edged RECTANGLE the size of its search box. It read
+	# as blocks of colour stacked on the seabed. Fading over the outer quarter puts the
+	# claim's boundary back where the falloff says it should be.
+	var q := sqrt(sx * sx + sy * sy) / Territory.REACH
+	return influence * smoothstep(1.0, 0.72, q)
+
+## How far this colony reaches on each axis, in world units.
+##
+## `radius()` scaled by the faction's `shape`. A faction with shape (1, 1) claims the
+## disc it always did; anything else claims an ellipse, which is what a reef hugging the
+## floor or a plume rising off a vent actually looks like.
+func extent() -> Vector2:
+	var r := radius()
+	var shape := faction.shape if faction != null else Vector2.ONE
+	return Vector2(r * maxf(shape.x, 0.01), r * maxf(shape.y, 0.01))
 
 ## Pays for a daughter colony. Returns what the daughter should start with, or 0 when
 ## the parent cannot afford it after all.

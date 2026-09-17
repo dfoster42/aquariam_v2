@@ -40,6 +40,9 @@ func _process(_delta: float) -> bool:
 	_test_pressure()
 	_test_vacuum()
 	_test_bleach()
+	_test_seated_on_floor()
+	_test_water_denominator()
+	_test_age_round_trip()
 
 	if _failures.is_empty():
 		print("RESULT: PASS")
@@ -265,3 +268,121 @@ func _test_bleach() -> void:
 		% [destroyed, killed])
 	tank.clear_colonies()
 	tank.queue_free()
+
+# ------------------------------------------------- the seabed prerequisite
+
+## Colonies, plants and fish all belong in the water, not in the rock.
+##
+## Before the floor was ported into the simulation, none of them knew it existed: a
+## colony was founded wherever the finger landed, which in a side view is a reef hanging
+## in mid-water, and fish sampled wander targets from the whole rectangle including the
+## 13-36% of every column painted as solid ground.
+func _test_seated_on_floor() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var seabed := tank.seabed()
+	_check(seabed != null, "the tank has no seabed")
+	if seabed == null:
+		return
+
+	# A tap high in the water column still founds the reef on the ground beneath it.
+	for x: float in [200.0, 680.0, 1440.0, 1847.0, 2754.0, 3000.0]:
+		var colony := tank.plant_colony(tank.available_factions[0], Vector2(x, 300.0))
+		if colony == null:
+			_failures.append("no colony could be founded at x=%.0f" % x)
+			continue
+		_check(absf(colony.global_position.y - seabed.height_at(x)) <= 1.0,
+			"a colony at x=%.0f sits at y=%.1f, floor is %.1f"
+				% [x, colony.global_position.y, seabed.height_at(x)])
+
+	# Daughters walk along the terrain rather than off it.
+	_advance(tank, 200.0)
+	var airborne := 0
+	for colony in tank.colonies():
+		if absf(colony.global_position.y - seabed.height_at(colony.global_position.x)) > 1.0:
+			airborne += 1
+	_check(airborne == 0, "%d colonies are not seated on the floor after spreading" % airborne)
+
+	# And no fish is ever inside the ground, over a real run.
+	var stuck := 0
+	for i in 240:
+		tank._process(1.0 / 30.0)
+	for fish in tank.fish():
+		if seabed.is_rock(fish.global_position):
+			stuck += 1
+	_check(stuck == 0, "%d fish are inside the seabed" % stuck)
+
+	tank.clear_colonies()
+	tank.queue_free()
+
+## Shares are fractions of the SEA, not of the tank's rectangle.
+func _test_water_denominator() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var territory := tank.territory()
+	var grid := territory.grid_size()
+	_check(territory.water_cells() < grid.x * grid.y,
+		"every cell in the grid counts as water; the floor mask is not being applied")
+	_check(territory.water_cells() > int(0.6 * grid.x * grid.y),
+		"only %d of %d cells count as water, which is too few for the shipped curve"
+			% [territory.water_cells(), grid.x * grid.y])
+
+	# An empty tank is all open sea.
+	_check(is_equal_approx(territory.open_water(), 1.0),
+		"an empty tank reports %.3f open water" % territory.open_water())
+
+	# And the books balance: what everyone holds plus what nobody holds is the whole sea.
+	tank.plant_colony(tank.available_factions[0], Vector2(900, 400), 80.0)
+	tank.plant_colony(tank.available_factions[1], Vector2(2100, 400), 80.0)
+	_advance(tank, 60.0)
+	tank._rebuild_territory()
+	var held := 0.0
+	for faction in tank.available_factions:
+		held += territory.faction_share(faction)
+	_check(absf(held + territory.open_water() - 1.0) < 0.001,
+		"shares sum to %.4f, not 1.0" % (held + territory.open_water()))
+
+	tank.clear_colonies()
+	tank.queue_free()
+
+## A colony's age is what makes an old reef different from a new one, so it has to
+## survive a relaunch. It was being dropped on every save.
+func _test_age_round_trip() -> void:
+	TankStore.clear()
+	var tank := _tank()
+	if tank == null:
+		return
+	var colony := tank.plant_colony(tank.available_factions[0], Vector2(1500, 400), 50.0)
+	if colony == null:
+		_failures.append("could not found a colony for the age round trip")
+		return
+	_advance(tank, 120.0)
+	var aged := colony.age
+	var mass := colony.biomass
+	_check(aged > 100.0, "the colony only aged %.1fs over a 120s advance" % aged)
+	_check(TankStore.save(tank) == OK, "saving a tank with colonies failed")
+
+	var data := TankStore.read()
+	var entries: Array = data.get("colonies", [])
+	_check(entries.size() >= 1, "the save holds no colonies")
+
+	var restored := _tank()
+	if restored == null:
+		return
+	restored.clear_colonies()
+	_check(restored.restore(data), "restore() reported nothing restored")
+	var back := restored.colonies()
+	_check(back.size() >= 1, "no colony came back")
+	if back.size() >= 1:
+		_check(absf(back[0].age - aged) <= 1.0,
+			"age did not survive the save: %.1f -> %.1f" % [aged, back[0].age])
+		_check(absf(back[0].biomass - mass) <= 0.5,
+			"biomass did not survive the save: %.1f -> %.1f" % [mass, back[0].biomass])
+	print("  round trip: a %.0fs old reef came back %.0fs old" % [aged, back[0].age if back.size() >= 1 else -1.0])
+
+	tank.clear_colonies()
+	restored.clear_colonies()
+	tank.queue_free()
+	restored.queue_free()

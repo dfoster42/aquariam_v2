@@ -51,10 +51,6 @@ const STRIKE_RADIUS: float = 360.0
 ## single hit kills a young colony outright and badly wounds a mature one — a power
 ## that only chips at a reef gives the player nothing to watch.
 const STRIKE_POWER: float = 90.0
-## How far a bleach carries past the colony it started on, as a multiple of the two
-## colonies' radii. Above 1.0 it can cross a small gap between neighbours; much above
-## and it jumps to reefs that do not look connected.
-const BLEACH_CONTACT: float = 1.15
 ## Fraction of its strength a bleach keeps at each hop. Below about 0.7 it dies out
 ## before it reaches the far side of a large faction, which is the whole point of it.
 const BLEACH_DECAY: float = 0.82
@@ -122,6 +118,7 @@ var _history := TankHistory.new()
 var _undo_available: bool = false
 var _colonies: Array[Colony] = []
 var _territory: Territory
+var _seabed: Seabed
 var _since_territory: float = 0.0
 
 @onready var background: Sprite2D = $Background
@@ -149,7 +146,8 @@ func _ready() -> void:
 	selected_species = available_species[0]
 
 	available_factions = available_factions.filter(func(f: Faction) -> bool: return f != null)
-	_territory = Territory.new(_bounds)
+	_seabed = Seabed.new(_bounds)
+	_territory = Territory.new(_bounds, _seabed)
 
 	background.modulate = backdrop_tint
 	_fit_background()
@@ -256,7 +254,11 @@ func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1
 		return null
 	var colony: Colony = COLONY_SCENE.instantiate()
 	colony.configure(faction, start_biomass)
-	colony.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	var where := _bounds.get_center() if not _bounds.has_point(position) else position
+	# Reefs grow on the ground. A tap anywhere in a column founds one on the seabed
+	# below the finger rather than leaving it hanging in open water, which is what made
+	# the colonies read as anemones floating in mid-air.
+	colony.global_position = Vector2(where.x, _seabed.height_at(where.x))
 	colony.released.connect(_on_colony_released)
 	colony.spreading.connect(_on_colony_spreading)
 	colony.died.connect(_on_colony_died)
@@ -312,12 +314,11 @@ func bleach(position: Vector2, radius: float = STRIKE_RADIUS) -> float:
 	while not frontier.is_empty():
 		var current: Colony = frontier.pop_front()
 		var power := float(strength[current])
-		var reach := current.radius()
-		for other in _colonies:
+		# Neighbours by shared territory border, not by overlapping radii. The radius
+		# test could only describe circles and judged contact by geometry nobody can
+		# see; a shared cell edge is the border actually painted on screen.
+		for other in _territory.neighbours(current):
 			if seen.has(other) or other.faction != faction:
-				continue
-			var gap := current.global_position.distance_to(other.global_position)
-			if gap > (reach + other.radius()) * BLEACH_CONTACT:
 				continue
 			seen[other] = true
 			var carried := power * BLEACH_DECAY
@@ -363,10 +364,12 @@ func _on_colony_spreading(parent: Colony, position: Vector2) -> void:
 	if _colonies.size() >= MAX_COLONIES or _territory == null:
 		return
 	var margin := Colony.BASE_RADIUS
-	var inner := Rect2(_bounds.position + Vector2(margin, margin),
-		_bounds.size - Vector2(margin, margin) * 2.0)
-	if not inner.has_point(position):
+	if position.x < _bounds.position.x + margin or position.x > _bounds.end.x - margin:
 		return
+	# Re-seated on the floor: a daughter is placed by horizontal offset and the ground
+	# under that offset is wherever the curve says, not wherever the parent happened to
+	# sit. Without this a chain of daughters walks off the terrain in a straight line.
+	position = Vector2(position.x, _seabed.height_at(position.x))
 	var holder := _territory.owner_at(position)
 	if holder != null and holder.faction != parent.faction:
 		return
@@ -395,6 +398,11 @@ func colonies() -> Array[Colony]:
 
 func territory() -> Territory:
 	return _territory
+
+## Where the ground is. Shared by fish, decor and colonies so they agree with the
+## backdrop about the floor.
+func seabed() -> Seabed:
+	return _seabed
 
 func clear_colonies() -> void:
 	for colony in _colonies:
@@ -499,7 +507,7 @@ func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 
 	var fish: Fish = FISH_SCENE.instantiate()
 	var predators: Array[FishSpecies] = _predator_map.get(species, [] as Array[FishSpecies])
-	fish.configure(species, predators, _bounds, age)
+	fish.configure(species, predators, _bounds, age, _seabed)
 	fish.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
 	fish.eaten.connect(_on_fish_eaten)
 
@@ -709,7 +717,10 @@ func place_decor(kind: DecorKind, position: Vector2) -> Decor:
 		return null
 	var item: Decor = DECOR_SCENE.instantiate()
 	item.configure(kind)
-	item.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	var where := _bounds.get_center() if not _bounds.has_point(position) else position
+	# Plants are rooted at their base and stand upward, so a plant placed in open water
+	# was a plant hanging in open water. Seat it on the ground under the tap.
+	item.global_position = Vector2(where.x, _seabed.height_at(where.x)) if _seabed != null else where
 	(decor_front if kind.in_front else decor_back).add_child(item)
 	_decor.append(item)
 	_rebuild_shelter()
@@ -887,9 +898,11 @@ func restore(data: Dictionary) -> bool:
 			continue
 		var faction: Faction = faction_by_path.get(entry.get("faction", ""), null)
 		if faction != null:
-			plant_colony(faction,
+			var restored_colony := plant_colony(faction,
 				Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))),
 				float(entry.get("biomass", -1.0)))
+			if restored_colony != null:
+				restored_colony.age = float(entry.get("age", 0.0))
 
 	var by_path: Dictionary = {}
 	for species in available_species:

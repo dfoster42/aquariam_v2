@@ -57,6 +57,12 @@ var faction: Faction
 var _predators: Array[FishSpecies] = []
 var _target: Vector2 = Vector2.ZERO
 var _bounds: Rect2 = Rect2()
+## Where the ground is. Fish used to swim through it: `_random_point` sampled the whole
+## rectangle and `_clamp_to_bounds` only knew about the rectangle, so between 13% and 36%
+## of every column — the part the backdrop paints as solid rock — was open water as far
+## as the simulation was concerned. Nobody noticed while nothing else knew about the floor
+## either. Optional, so a fish built without one behaves exactly as it always did.
+var _seabed: Seabed
 var _is_eaten: bool = false
 
 @onready var sprite: Sprite2D = $Sprite2D
@@ -64,10 +70,11 @@ var _is_eaten: bool = false
 ## Called by Aquarium immediately after instantiation, before the node enters
 ## the tree. `predators` is the derived reverse of every species' `eats` list.
 func configure(fish_species: FishSpecies, predators: Array[FishSpecies], bounds: Rect2,
-		start_age: float = -1.0) -> void:
+		start_age: float = -1.0, seabed: Seabed = null) -> void:
 	species = fish_species
 	_predators = predators
 	_bounds = bounds
+	_seabed = seabed
 	_target = _random_point()
 	# Seeded and restored fish arrive as adults of assorted ages; only a fish born in
 	# the tank starts at zero, so a fresh tank is not a shoal of identical juveniles
@@ -103,6 +110,9 @@ func _apply_faction_tint() -> void:
 
 func set_bounds(bounds: Rect2) -> void:
 	_bounds = bounds
+
+func set_seabed(seabed: Seabed) -> void:
+	_seabed = seabed
 
 ## Advances this fish by `delta` seconds. `hash` must already contain every
 ## other fish in the tank for this frame.
@@ -336,15 +346,25 @@ func _apply_size() -> void:
 	var scale_factor := species.size * growth() / texture_size.y
 	sprite.scale = Vector2(scale_factor, scale_factor)
 
+## Keeps a fish inside the tank AND out of the ground.
+##
+## The rectangle first, then the floor: the floor is sampled at the clamped x, so a fish
+## pushed sideways at the map's edge is seated against the ground that is actually there
+## rather than against the ground under where it used to be.
 func _clamp_to_bounds(point: Vector2) -> Vector2:
 	var margin := species.size * 0.5
-	return Vector2(
+	var inside := Vector2(
 		clampf(point.x, _bounds.position.x + margin, _bounds.end.x - margin),
 		clampf(point.y, _bounds.position.y + margin, _bounds.end.y - margin),
 	)
+	if _seabed == null:
+		return inside
+	return _seabed.lift_out_of_rock(inside, margin)
 
 func _random_point() -> Vector2:
 	var margin := species.size * 0.5 if species != null else 0.0
+	if _seabed != null:
+		return _seabed.random_water_point(margin)
 	return Vector2(
 		randf_range(_bounds.position.x + margin, _bounds.end.x - margin),
 		randf_range(_bounds.position.y + margin, _bounds.end.y - margin),

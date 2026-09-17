@@ -239,6 +239,76 @@ does not take out a colony — `strike` and `bleach` are the verbs for that — 
 does take back one you just placed. The Strike tile borrows the Remove glyph, and the
 faction tiles borrow the anemone.
 
+## The simulation knows where the ground is
+
+`tools/art/draw_background.py` draws a sculpted sea floor, and for a long time it had the
+only copy of that curve. Nothing in the tank knew the floor existed, so:
+
+- decor floated in mid-water, because a plant went wherever the finger landed
+- colonies floated in mid-water, for the same reason
+- **fish swam through the 13-36% of every column painted as solid rock**
+
+Nobody noticed the third one because nothing else knew either. `scripts/systems/seabed.gd`
+is a transliteration of `terrain_level`, `ravine_depth` and `floor_height`, and it is exact
+rather than approximate: the Python takes `t = x / width`, so the curve is scale-invariant
+in x, and `_fit_background()` computes a cover scale of exactly 1.0 — backdrop pixel
+(x, y) *is* world (x, y). The shipped floor spans y 1380.6 to 1871.2, and water is
+**76.6%** of the tank's rectangle.
+
+The two implementations share no source of truth, so `test/seabed_test.gd` pins them
+together against values dumped from the Python. If the art is redrawn with different
+constants, that test is what says so, rather than the floor silently sliding out from
+under everything.
+
+**The three ravines are live.** `draw_background.py` carries a comment saying "No ravines
+for now" — it refers only to a deleted dark-fill layer, while `RAVINES` has three entries
+and `floor_height` defaults to carved. There are real basins at x roughly 680, 1847 and
+2754, and a port that believed the comment would have missed them.
+
+### A claim is a vector, not a distance
+
+`Colony.influence_at()` took a scalar distance, which can only ever describe a circle.
+Territory had already computed the offset vector and threw the direction away on the next
+line. It now takes the whole offset and divides per axis by a `Faction.shape`, so a claim
+can be a crust hugging the floor or a plume rising off a vent. Measured, the old circular
+claim was a 922-unit disc inside a 1384-unit water column — it was not merely reading as
+top-down, it was geometrically incapable of reading as anything else.
+
+Two things fell out of that change:
+
+**Anisotropy made the rebuild cheaper.** The search box is per-axis now, so a wide flat
+strip or a tall narrow one both visit fewer cells than the square that bounded the old
+disc.
+
+**The claims had been rectangles all along.** Territory only visits cells within `REACH`
+extents, and an inverse square has not decayed anywhere near `MIN_CLAIM` by then — at
+biomass 130 the influence at the box edge was still 19 against a threshold of 3. Every
+mature colony's territory was a hard-edged rectangle the size of its search box, which
+the floor mask made obvious by clipping the bottom off it. Influence now tapers to
+nothing over the outer quarter of the box, so the claim ends where the falloff says.
+
+### Shares are fractions of the sea
+
+Territory divided every share by `_cols * _rows`, ground included. A faction holding every
+drop of water on the map could never report above 0.766, and `open_water()` counted bedrock
+as open. Cells are masked once at startup — the floor never moves — and every share is
+divided by the water cells. The earlier "32.8% of the map" figures were understated by
+about 30% for this reason.
+
+### Disasters travel along the border you can see
+
+`bleach()` decided which colonies touched by comparing the sum of two radii against their
+separation. That test could only describe circles, and it judged contact by geometry
+nobody can see — two colonies whose discs overlapped counted as touching even with a third
+faction's territory wedged between them. Adjacency is now built from shared territory-cell
+edges during the same pass that paints them, so a bleach runs along the line on screen.
+
+### Colony age survives a relaunch
+
+It did not. `colony.gd`'s own docstring says age "is what makes a colony you have had for
+six minutes a different thing from a fresh one", and the save wrote faction, position and
+biomass only.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:

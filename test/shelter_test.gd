@@ -48,8 +48,12 @@ func _check_prey_in_cover_survives() -> void:
 	var prey_s := _species(tank, "Clownfish")
 	var kelp := _decor(tank, "Kelp")
 
-	var prey_at := Vector2(1600, 1100)
-	tank.place_decor(kelp, prey_at)
+	# Read back where the plant actually went rather than assuming it stayed where it
+	# was asked for. Decor is now seated on the seabed, so the y of a placement request
+	# is only a suggestion — asserting against the requested point tested the old
+	# behaviour where plants hung in open water.
+	var cover := tank.place_decor(kelp, Vector2(1600, 1100))
+	var prey_at := cover.global_position
 	var prey: Fish = tank.spawn(prey_s, prey_at)
 	tank.spawn(shark_s, prey_at + Vector2(120, 0))
 
@@ -95,11 +99,11 @@ func _check_flee_towards_cover() -> void:
 	var prey_s := _species(tank, "Clownfish")
 	var kelp := _decor(tank, "Kelp")
 
-	var prey_at := Vector2(1600, 1100)
-	# Cover off to one side, the shark on the other, so "toward cover" and "away from
-	# the shark" are different directions.
-	var cover_at := prey_at + Vector2(0, -180)
-	tank.place_decor(kelp, cover_at)
+	# Cover below, the shark to the side, so "toward cover" and "away from the shark"
+	# are different directions. Which way round this goes is decided by the terrain now:
+	# a plant is always on the floor, so the prey has to be the thing placed above it.
+	var cover_at := tank.place_decor(kelp, Vector2(1600, 1100)).global_position
+	var prey_at := cover_at + Vector2(0, -180)
 	var prey: Fish = tank.spawn(prey_s, prey_at)
 	tank.spawn(shark_s, prey_at + Vector2(150, 0))
 
@@ -139,8 +143,7 @@ func _check_flee_towards_cover() -> void:
 func _check_hidden_holds_position() -> void:
 	var tank := _tank()
 	var kelp := _decor(tank, "Kelp")
-	var cover_at := Vector2(1600, 1100)
-	tank.place_decor(kelp, cover_at)
+	var cover_at := tank.place_decor(kelp, Vector2(1600, 1100)).global_position
 	var hidden: Fish = tank.spawn(_species(tank, "Clownfish"), cover_at)
 	tank.spawn(_species(tank, "Shark"), cover_at + Vector2(110, 0))
 
@@ -162,8 +165,7 @@ func _check_decor_persists() -> void:
 	tank.clear_decor()
 	var kelp := _decor(tank, "Kelp")
 	var anemone := _decor(tank, "Anemone")
-	var kelp_at := Vector2(900, 1200)
-	tank.place_decor(kelp, kelp_at)
+	var kelp_at := tank.place_decor(kelp, Vector2(900, 1200)).global_position
 	tank.place_decor(anemone, Vector2(1500, 1300))
 	_check(TankStore.save(tank) == OK, "saving a tank with decor failed")
 

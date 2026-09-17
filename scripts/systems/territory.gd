@@ -34,22 +34,48 @@ const FULL_INFLUENCE: float = 40.0
 var _cols: int = 0
 var _rows: int = 0
 var _bounds: Rect2 = Rect2()
+var _seabed: Seabed
 ## Cell index -> owning colony. Absent means unclaimed.
 var _owner: Dictionary = {}
 ## Colony -> cells owned.
 var _owned: Dictionary = {}
 ## Colony -> cells within its reach, owned or not.
 var _reached: Dictionary = {}
+## Colony -> { neighbouring colony -> true }, built from cells that actually touch.
+var _adjacent: Dictionary = {}
+## Cell index -> true when the cell is open water. Ground is never claimable.
+var _water: Dictionary = {}
+var _water_cells: int = 0
 var _image: Image
 var _texture: ImageTexture
 
-func _init(bounds: Rect2) -> void:
+func _init(bounds: Rect2, seabed: Seabed = null) -> void:
 	_bounds = bounds
+	_seabed = seabed
 	_cols = maxi(1, ceili(bounds.size.x / CELL))
 	_rows = maxi(1, ceili(bounds.size.y / CELL))
 	_image = Image.create(_cols, _rows, false, Image.FORMAT_RGBA8)
 	_image.fill(Color(0, 0, 0, 0))
 	_texture = ImageTexture.create_from_image(_image)
+	_mask_water()
+
+## Marks which cells are open water, once. The floor never moves.
+##
+## Without this, a third of the grid was stone that could be claimed and painted, and
+## every share was a fraction of a rectangle rather than of the sea: measured on the
+## shipped curve, water is 76.6% of the tank, so a faction holding every drop of it could
+## never report above 0.766 and `open_water()` counted bedrock as open.
+func _mask_water() -> void:
+	_water.clear()
+	_water_cells = 0
+	for cy in _rows:
+		for cx in _cols:
+			var centre := _bounds.position + Vector2((cx + 0.5) * CELL, (cy + 0.5) * CELL)
+			if _seabed == null or not _seabed.is_rock(centre):
+				_water[cy * _cols + cx] = true
+				_water_cells += 1
+	if _water_cells == 0:
+		_water_cells = _cols * _rows
 
 ## Recomputes ownership from `colonies` and repaints the texture.
 ##
@@ -60,6 +86,7 @@ func rebuild(colonies: Array) -> void:
 	_owner.clear()
 	_owned.clear()
 	_reached.clear()
+	_adjacent.clear()
 	_image.fill(Color(0, 0, 0, 0))
 
 	var best: Dictionary = {}
@@ -68,24 +95,28 @@ func rebuild(colonies: Array) -> void:
 			continue
 		_owned[colony] = 0
 		_reached[colony] = 0
-		var reach := colony.radius() * REACH
+		_adjacent[colony] = {}
+		# The reach box is per-axis now, so a crust visits a wide flat strip and a plume
+		# a tall narrow one. Either visits FEWER cells than the square that bounded the
+		# old disc, so anisotropy made the rebuild cheaper rather than dearer.
+		var reach := colony.extent() * REACH
 		var local := colony.global_position - _bounds.position
-		var min_x := maxi(0, floori((local.x - reach) / CELL))
-		var max_x := mini(_cols - 1, floori((local.x + reach) / CELL))
-		var min_y := maxi(0, floori((local.y - reach) / CELL))
-		var max_y := mini(_rows - 1, floori((local.y + reach) / CELL))
+		var min_x := maxi(0, floori((local.x - reach.x) / CELL))
+		var max_x := mini(_cols - 1, floori((local.x + reach.x) / CELL))
+		var min_y := maxi(0, floori((local.y - reach.y) / CELL))
+		var max_y := mini(_rows - 1, floori((local.y + reach.y) / CELL))
 
 		for cy in range(min_y, max_y + 1):
 			for cx in range(min_x, max_x + 1):
-				var centre := Vector2((cx + 0.5) * CELL, (cy + 0.5) * CELL)
-				var distance := centre.distance_to(local)
-				if distance > reach:
+				var key := cy * _cols + cx
+				if not _water.has(key):
 					continue
+				var centre := Vector2((cx + 0.5) * CELL, (cy + 0.5) * CELL)
+				var offset := centre - local
 				_reached[colony] = int(_reached[colony]) + 1
-				var influence := colony.influence_at(distance)
+				var influence := colony.influence_at(offset)
 				if influence < MIN_CLAIM:
 					continue
-				var key := cy * _cols + cx
 				if influence > float(best.get(key, 0.0)):
 					best[key] = influence
 					_owner[key] = colony
@@ -106,7 +137,38 @@ func rebuild(colonies: Array) -> void:
 		tint.a = MAX_ALPHA * sqrt(strength)
 		_image.set_pixel(key % _cols, key / _cols, tint)
 
+	_build_adjacency()
 	_texture.update(_image)
+
+## Records which colonies actually share a border, from the cells themselves.
+##
+## Replaces a contact test that compared the sum of two radii against their separation.
+## That test could only ever describe circles, and it judged contact by geometry the
+## player cannot see — two colonies whose discs overlapped were "touching" even with a
+## third colony's territory wedged between them. A shared cell edge is the border that is
+## actually painted on screen, so a disaster now travels the line the player can see.
+func _build_adjacency() -> void:
+	for key: int in _owner:
+		var colony: Colony = _owner[key]
+		var cx := key % _cols
+		# Right and down only: every pair is visited once and recorded both ways.
+		if cx < _cols - 1:
+			_note_adjacent(colony, _owner.get(key + 1, null))
+		if key + _cols < _cols * _rows:
+			_note_adjacent(colony, _owner.get(key + _cols, null))
+
+func _note_adjacent(a: Colony, b: Colony) -> void:
+	if b == null or a == b:
+		return
+	(_adjacent[a] as Dictionary)[b] = true
+	(_adjacent[b] as Dictionary)[a] = true
+
+## The colonies whose territory touches `colony`'s.
+func neighbours(colony: Colony) -> Array[Colony]:
+	var found: Array[Colony] = []
+	for other: Colony in _adjacent.get(colony, {}):
+		found.append(other)
+	return found
 
 ## Fraction of the ground it reaches for that `colony` actually holds, 0..1.
 ##
@@ -119,9 +181,11 @@ func pressure_for(colony: Colony) -> float:
 		return 1.0
 	return clampf(float(int(_owned.get(colony, 0))) / float(reached), 0.0, 1.0)
 
-## Fraction of the whole map this colony holds, 0..1. What a readout would show.
+## Fraction of the SEA this colony holds, 0..1. What a readout would show.
+##
+## Divided by water cells, not by every cell in the grid — see `_mask_water`.
 func share_of_map(colony: Colony) -> float:
-	return float(int(_owned.get(colony, 0))) / float(_cols * _rows)
+	return float(int(_owned.get(colony, 0))) / float(_water_cells)
 
 ## Fraction of the whole map a faction holds across all its colonies.
 func faction_share(faction: Faction) -> float:
@@ -129,11 +193,11 @@ func faction_share(faction: Faction) -> float:
 	for colony: Colony in _owned:
 		if colony.faction == faction:
 			cells += int(_owned[colony])
-	return float(cells) / float(_cols * _rows)
+	return float(cells) / float(_water_cells)
 
-## Fraction of the map nobody holds.
+## Fraction of the sea nobody holds.
 func open_water() -> float:
-	return 1.0 - (float(_owner.size()) / float(_cols * _rows))
+	return 1.0 - (float(_owner.size()) / float(_water_cells))
 
 ## Which colony holds the cell containing `point`, or null for open water.
 func owner_at(point: Vector2) -> Colony:
@@ -147,3 +211,7 @@ func texture() -> ImageTexture:
 
 func grid_size() -> Vector2i:
 	return Vector2i(_cols, _rows)
+
+## How many cells are open water. The denominator of every share above.
+func water_cells() -> int:
+	return _water_cells
