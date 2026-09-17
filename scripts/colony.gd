@@ -27,6 +27,13 @@ const BASE_RADIUS: float = 140.0
 const REFERENCE_BIOMASS: float = 12.0
 ## Biomass a colony is founded with.
 const SEED_BIOMASS: float = 12.0
+## How far a benthic claim is allowed to reach BELOW its own anchor, in world units.
+##
+## Not zero: the floor curve is sampled per cell centre and a colony is rooted at one x,
+## so on a gradient the cell the colony stands in can have its centre slightly below the
+## anchor. Without a little slack the colony fails to claim the ground it is sitting on.
+const CRUST_DEPTH: float = 40.0
+
 ## How hard being hemmed in bites. A colony that owns none of the ground it reaches
 ## for still grows at this fraction of its rate, so a besieged colony stalls rather
 ## than dying of geometry alone.
@@ -44,15 +51,29 @@ var pressure: float = 1.0
 ## makes "a colony you have had for six minutes" a different thing from a fresh one.
 var age: float = 0.0
 
+## World y of the ground this colony is rooted to. Benthic colonies extrude their claim
+## upward from here; a pelagic colony ignores it.
+var anchor_y: float = 0.0
+
+## PELAGIC only: whether a benthic claim currently sits beneath it. Written by the tank
+## after each territory pass, for the same reason `pressure` is — the colony cannot see
+## the map, and the answer is the same for every cell it occupies.
+var supported: bool = true
+
 var _fish_debt: float = 0.0
 var _spread_timer: float = 0.0
 var _dead: bool = false
 
 @onready var sprite: Sprite2D = $Sprite2D
 
-func configure(colony_faction: Faction, start_biomass: float = -1.0) -> void:
+func configure(colony_faction: Faction, start_biomass: float = -1.0,
+		ground_y: float = 0.0) -> void:
 	faction = colony_faction
 	biomass = start_biomass if start_biomass > 0.0 else SEED_BIOMASS
+	anchor_y = ground_y
+
+func is_benthic() -> bool:
+	return faction == null or faction.claim == Faction.Claim.BENTHIC
 
 func _ready() -> void:
 	if faction == null:
@@ -78,6 +99,12 @@ func tick(delta: float) -> void:
 	var ceiling := faction.capacity * maxf(pressure, MIN_PRESSURE)
 	if ceiling > 0.0:
 		biomass += faction.growth_rate * biomass * (1.0 - biomass / ceiling) * delta
+	# A shoal over open ground has nothing holding it up. Not instant death: it thins
+	# visibly, so striking the reef beneath a pelagic faction reads as a cause and the
+	# shoal's decline reads as the effect, several seconds apart and on different parts
+	# of the screen.
+	if not is_benthic() and not supported:
+		biomass -= faction.decay_unsupported * delta
 	biomass = maxf(biomass, 0.0)
 	_apply_size()
 
@@ -111,14 +138,17 @@ func _tick_spread(delta: float) -> void:
 	_spread_timer = 0.0
 	if biomass < faction.capacity * faction.spread_at or pressure < 0.5:
 		return
-	# Just beyond its own edge: close enough that the daughter's territory joins the
-	# parent's rather than stranding an island, far enough that it is new ground.
-	var offset := Vector2.from_angle(randf_range(-PI, PI)) * radius() * 1.35
-	spreading.emit(self, global_position + offset)
+	# Sideways only, and just beyond its own edge: close enough that the daughter's
+	# territory joins the parent's rather than stranding an island, far enough that it is
+	# new ground. Benthic factions walk the seabed and pelagic ones run along their band,
+	# so neither has anywhere to go but left or right — the vertical axis is earned by
+	# growing, not by budding.
+	var step := extent().x * 1.2 * (1.0 if randf() < 0.5 else -1.0)
+	spreading.emit(self, global_position + Vector2(step, 0.0))
 
-## How far this colony reaches, in world units. Area scales with biomass, so doubling
-## the biomass widens the reach by about 40% rather than doubling it — a colony that
-## grew tenfold would otherwise span the map.
+## The colony's base scale, in world units. Area scales with biomass, so doubling the
+## biomass widens it by about 40% rather than doubling it — a colony that grew tenfold
+## would otherwise span the map. `extent()` shapes this per claim kind.
 func radius() -> float:
 	return BASE_RADIUS * sqrt(maxf(biomass, 1.0) / REFERENCE_BIOMASS)
 
@@ -135,30 +165,74 @@ func radius() -> float:
 ## big reef pushes its border into a small neighbour's ground.
 func influence_at(offset: Vector2) -> float:
 	var reach := extent()
-	var sx := offset.x / maxf(reach.x, 1.0)
-	var sy := offset.y / maxf(reach.y, 1.0)
-	var influence := biomass / (1.0 + sx * sx + sy * sy)
+	if is_benthic():
+		# Height above the ground this colony is rooted to. Nothing below the floor is
+		# claimable — Territory's water mask enforces that too, but a claim that bled
+		# into the rock is exactly what read as a view from above, so it is checked in
+		# both places.
+		var height := -offset.y
+		if height < -CRUST_DEPTH:
+			return 0.0
+		var t := clampf(height / maxf(reach.y, 1.0), 0.0, 1.0)
+		# The column NARROWS as it rises. Without this a benthic claim is a rectangle:
+		# full-width lateral falloff all the way up to a flat lid, which drew as a
+		# coloured block standing on the seabed. A reef is widest where it is attached.
+		var width := reach.x * lerpf(1.0, 0.42, t * t)
+		var lateral := _lateral(offset.x, width)
+		if lateral <= 0.0:
+			return 0.0
+		# Full strength from the floor to the column's cap, then a soft lid — a
+		# deliberate flat top rather than the accidental one a clipped circle produced.
+		return lateral * (1.0 - smoothstep(0.82, 1.0, t))
 
-	# Taper to nothing at the edge of the searched box, or the box IS the claim's shape.
-	#
-	# Territory only visits cells within REACH extents, and an inverse square has not
-	# decayed anywhere near the claim threshold by then: measured at biomass 130, the
-	# influence at the box edge was still 19 against a MIN_CLAIM of 3, so every mature
-	# colony's territory was a hard-edged RECTANGLE the size of its search box. It read
-	# as blocks of colour stacked on the seabed. Fading over the outer quarter puts the
-	# claim's boundary back where the falloff says it should be.
-	var q := sqrt(sx * sx + sy * sy) / Territory.REACH
-	return influence * smoothstep(1.0, 0.72, q)
+	# A pelagic band: strength across its thickness, nothing outside it. The colony sits
+	# at the middle of its own band, so the offset is already measured from there. The
+	# vertical fade runs over most of the half-thickness rather than its outer sliver,
+	# because a band that fades over one cell draws as a painted bar.
+	var half := maxf(reach.y, 1.0)
+	var band := 1.0 - smoothstep(0.35, 1.0, absf(offset.y) / half)
+	if band <= 0.0:
+		return 0.0
+	return _lateral(offset.x, reach.x) * band
+
+## Lateral falloff about `width`, tapered to nothing at the edge of the searched box.
+##
+## Two colonies meet where their biomasses balance, so a big reef pushes its border into
+## a small neighbour's ground rather than splitting the difference.
+##
+## The taper is not cosmetic. Territory only visits cells within REACH extents, and an
+## inverse square has not decayed anywhere near the claim threshold by then: measured at
+## biomass 130, the influence at the box edge was still 19 against a threshold of 3, so
+## every mature colony's territory was a hard-edged rectangle the size of its search box.
+func _lateral(dx: float, width: float) -> float:
+	var sx := dx / maxf(width, 1.0)
+	var falloff := biomass / (1.0 + sx * sx)
+	return falloff * smoothstep(1.0, 0.68, absf(sx) / Territory.REACH)
 
 ## How far this colony reaches on each axis, in world units.
 ##
-## `radius()` scaled by the faction's `shape`. A faction with shape (1, 1) claims the
-## disc it always did; anything else claims an ellipse, which is what a reef hugging the
-## floor or a plume rising off a vent actually looks like.
+## Width and height come from different places on purpose. Width is earned by growing and
+## is zero-sum — the seabed is 3240 units long and every unit gained is a unit someone
+## lost. Height is capped by what the faction IS, so a reef never becomes a kelp forest.
 func extent() -> Vector2:
 	var r := radius()
-	var shape := faction.shape if faction != null else Vector2.ONE
-	return Vector2(r * maxf(shape.x, 0.01), r * maxf(shape.y, 0.01))
+	if faction == null:
+		return Vector2(r, r)
+	if is_benthic():
+		return Vector2(r * faction.floor_grip, _column_height())
+	return Vector2(r * faction.band_spread, faction.band_thickness * 0.5)
+
+## How high the column of water above this colony's floor currently rises.
+##
+## Scales with how full the colony is, so a reef given room grows TALLER as well as
+## wider — which is the second beat of the clip: the neighbours slide sideways into a
+## dead interval, and then their flat tops rise.
+func _column_height() -> float:
+	if faction == null or faction.capacity <= 0.0:
+		return BASE_RADIUS
+	var fullness := clampf(biomass / faction.capacity, 0.0, 1.0)
+	return faction.reach_up * lerpf(0.28, 1.0, sqrt(fullness))
+
 
 ## Pays for a daughter colony. Returns what the daughter should start with, or 0 when
 ## the parent cannot afford it after all.

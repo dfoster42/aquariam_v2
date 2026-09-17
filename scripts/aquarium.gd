@@ -47,6 +47,8 @@ const MAX_COLONIES: int = 40
 const TERRITORY_INTERVAL: float = 0.25
 ## World radius a strike reaches.
 const STRIKE_RADIUS: float = 360.0
+## How many points across a pelagic colony's width are tested for benthic support.
+const SUPPORT_SAMPLES: int = 5
 ## Biomass a strike takes out at its centre, falling to nothing at its edge. Tuned so a
 ## single hit kills a young colony outright and badly wounds a mature one — a power
 ## that only chips at a reef gives the player nothing to watch.
@@ -231,9 +233,38 @@ func _rebuild_territory() -> void:
 	_territory.rebuild(_colonies)
 	for colony in _colonies:
 		colony.pressure = _territory.pressure_for(colony)
+		if not colony.is_benthic():
+			colony.supported = _benthic_under(colony)
 	territory_layer.texture = _territory.texture()
 	_fit_territory()
 	territory_changed.emit(_colonies.size())
+
+## Whether ANY benthic claim sits beneath `colony`, anywhere along its width.
+##
+## This is the rule that makes open water worth having and impossible to hold: a shoal
+## owns a band of the commons, but only while somebody's reef is rooted on the floor
+## below it. Deliberately not its OWN reef — requiring that made the condition almost
+## unreachable and, worse, made the interesting case impossible: a shoal living over a
+## rival's reef is a dependency the player can attack sideways. Strike the reef and the
+## shoal above it starves, several seconds later and in a different part of the frame,
+## without ever being targeted.
+##
+## Sampled across the band rather than at its centre, so a shoal half over a reef still
+## counts — losing support should take clearing the floor, not clipping one end of it.
+func _benthic_under(colony: Colony) -> bool:
+	if _territory == null or _seabed == null:
+		return true
+	var half := colony.extent().x
+	for i in SUPPORT_SAMPLES:
+		var t := 0.0 if SUPPORT_SAMPLES <= 1 else float(i) / float(SUPPORT_SAMPLES - 1)
+		var x := colony.global_position.x + lerpf(-half, half, t)
+		if x < _bounds.position.x or x > _bounds.end.x:
+			continue
+		# Just above the ground, where a benthic column is always at full strength.
+		var holder := _territory.owner_at(Vector2(x, _seabed.height_at(x) - Territory.CELL))
+		if holder != null and holder.is_benthic():
+			return true
+	return false
 
 ## Stretches the coarse ownership grid over the whole map. Linear filtering on the
 ## sprite is what turns 90x60 cells into soft regions instead of a chequerboard.
@@ -252,13 +283,22 @@ func _fit_territory() -> void:
 func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1.0) -> Colony:
 	if not is_node_ready() or faction == null or _colonies.size() >= MAX_COLONIES:
 		return null
-	var colony: Colony = COLONY_SCENE.instantiate()
-	colony.configure(faction, start_biomass)
 	var where := _bounds.get_center() if not _bounds.has_point(position) else position
-	# Reefs grow on the ground. A tap anywhere in a column founds one on the seabed
+	var ground := _seabed.height_at(where.x)
+	if not can_found(faction, where.x):
+		return null
+
+	var colony: Colony = COLONY_SCENE.instantiate()
+	colony.configure(faction, start_biomass, ground)
+	# A reef grows on the ground: a tap anywhere in a column founds one on the seabed
 	# below the finger rather than leaving it hanging in open water, which is what made
-	# the colonies read as anemones floating in mid-air.
-	colony.global_position = Vector2(where.x, _seabed.height_at(where.x))
+	# the colonies read as anemones floating in mid-air. A shoal instead sits in its own
+	# band, wherever the tap was in x.
+	if colony.is_benthic():
+		colony.global_position = Vector2(where.x, ground)
+	else:
+		colony.global_position = Vector2(where.x,
+			_bounds.position.y + _bounds.size.y * faction.altitude)
 	colony.released.connect(_on_colony_released)
 	colony.spreading.connect(_on_colony_spreading)
 	colony.died.connect(_on_colony_died)
@@ -267,6 +307,24 @@ func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1
 	_rebuild_territory()
 	colony_founded.emit(faction)
 	return colony
+
+## Whether `faction` may be founded on the ground at `x`.
+##
+## Benthic factions declare the stretch of floor they can live on as a fraction of map
+## height, which is what turns the terrain into the board: a deep faction can only take
+## the three ravines already drawn into the backdrop — about 6% of the map's floor length
+## and the deepest start in the game — while a shelf faction cannot go down there at all.
+func can_found(faction: Faction, x: float) -> bool:
+	if faction == null or _seabed == null:
+		return false
+	if faction.claim != Faction.Claim.BENTHIC:
+		return true
+	if _bounds.size.y <= 0.0:
+		return true
+	if faction.requires_ravine > 0.0 and _seabed.ravine_at(x) < faction.requires_ravine:
+		return false
+	var depth := (_seabed.height_at(x) - _bounds.position.y) / _bounds.size.y
+	return depth >= faction.floor_depth_range.x and depth <= faction.floor_depth_range.y
 
 ## Calls down a strike centred on `position`.
 ##

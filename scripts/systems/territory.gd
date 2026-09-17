@@ -27,6 +27,15 @@ const MIN_CLAIM: float = 3.0
 ## Alpha the wash reaches at full confidence. Territory is a stain in the water, not a
 ## coat of paint: the tank underneath has to stay the thing you are looking at.
 const MAX_ALPHA: float = 0.5
+## Alpha of the crust: the row of cells a benthic faction's held seabed runs through.
+##
+## Higher than the wash on purpose. The seabed is the contested real estate — 3240 units
+## long, finite, and zero-sum, where the water above it is a commons — so the ground a
+## faction holds should be the most saturated thing on screen, and a border between two
+## factions should read as a seam on the floor rather than as two clouds meeting.
+const CRUST_ALPHA: float = 0.82
+## How many cell rows above the floor the crust covers.
+const CRUST_ROWS: int = 1
 ## Influence at which the wash reaches MAX_ALPHA. Above a young colony's centre value,
 ## so a colony's heart deepens in colour as it grows rather than starting at full.
 const FULL_INFLUENCE: float = 40.0
@@ -46,6 +55,8 @@ var _adjacent: Dictionary = {}
 ## Cell index -> true when the cell is open water. Ground is never claimable.
 var _water: Dictionary = {}
 var _water_cells: int = 0
+## Column -> the lowest water row in it, i.e. the row the seabed runs through.
+var _floor_row: PackedInt32Array = PackedInt32Array()
 var _image: Image
 var _texture: ImageTexture
 
@@ -68,12 +79,16 @@ func _init(bounds: Rect2, seabed: Seabed = null) -> void:
 func _mask_water() -> void:
 	_water.clear()
 	_water_cells = 0
+	_floor_row.resize(_cols)
+	for cx in _cols:
+		_floor_row[cx] = _rows - 1
 	for cy in _rows:
 		for cx in _cols:
 			var centre := _bounds.position + Vector2((cx + 0.5) * CELL, (cy + 0.5) * CELL)
 			if _seabed == null or not _seabed.is_rock(centre):
 				_water[cy * _cols + cx] = true
 				_water_cells += 1
+				_floor_row[cx] = cy
 	if _water_cells == 0:
 		_water_cells = _cols * _rows
 
@@ -113,10 +128,17 @@ func rebuild(colonies: Array) -> void:
 					continue
 				var centre := Vector2((cx + 0.5) * CELL, (cy + 0.5) * CELL)
 				var offset := centre - local
-				_reached[colony] = int(_reached[colony]) + 1
 				var influence := colony.influence_at(offset)
 				if influence < MIN_CLAIM:
 					continue
+				# Counted only where the colony could actually claim, not everywhere its
+				# search box reaches. "Reached" has to mean "what I would own if nobody
+				# opposed me", or pressure punishes a claim for the shape of the box
+				# around it: a pelagic band is thin inside a box 2.4 extents tall, so it
+				# scored a structurally tiny pressure, its growth ceiling collapsed to
+				# the MIN_PRESSURE floor, and a shoal shrank to a fifth of its size no
+				# matter how much open water it held.
+				_reached[colony] = int(_reached[colony]) + 1
 				if influence > float(best.get(key, 0.0)):
 					best[key] = influence
 					_owner[key] = colony
@@ -135,7 +157,16 @@ func rebuild(colonies: Array) -> void:
 		# sqrt, not linear: most of a linear fade happens in the last cell, which puts
 		# the whole transition inside one 36-unit square. This spreads it over several.
 		tint.a = MAX_ALPHA * sqrt(strength)
-		_image.set_pixel(key % _cols, key / _cols, tint)
+
+		# The held seabed is drawn as a bright rind rather than as more wash. It is the
+		# only zero-sum ground in the game and it is where every border between two
+		# benthic factions actually is, so it should be the most saturated thing on the
+		# screen and legible in a thumbnail.
+		var cx := key % _cols
+		var cy := key / _cols
+		if colony.is_benthic() and cx < _floor_row.size() 				and cy >= _floor_row[cx] - CRUST_ROWS:
+			tint.a = maxf(tint.a, CRUST_ALPHA * sqrt(maxf(strength, 0.2)))
+		_image.set_pixel(cx, cy, tint)
 
 	_build_adjacency()
 	_texture.update(_image)

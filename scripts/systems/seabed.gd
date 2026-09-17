@@ -90,6 +90,15 @@ func height_at(x: float) -> float:
 	var i := int((x - _bounds.position.x) / LUT_STEP)
 	return _lut[clampi(i, 0, _lut.size() - 1)]
 
+## How deeply the floor at `x` is carved by a ravine, in world units.
+##
+## Depth alone cannot identify a ravine: the landform's own low point at x=0 sits at
+## y 1871, deeper than two of the three notches, so a "deep ground only" rule would hand
+## a vent faction the left edge of the map and call it a basin. This is the honest test.
+func ravine_at(x: float) -> float:
+	var local := x - _bounds.position.x
+	return ravine_depth(local, _bounds.size.x) * _bounds.size.y * (FLOOR_LOW - FLOOR_HIGH)
+
 ## Whether `point` is inside the ground.
 func is_rock(point: Vector2) -> bool:
 	return point.y > height_at(point.x)

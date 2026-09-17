@@ -79,17 +79,30 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _setup() -> void:
-	# Three reefs spaced so none starts touching another: the borders have to form
-	# during the run, or the first shot already shows the answer.
+	# One of everything, on ground each faction is actually allowed to hold. Spaced so
+	# none starts touching another: the borders have to form during the run, or the first
+	# shot already shows the answer.
+	#
+	# Positions are asked for rather than asserted — a vent can only be founded in one of
+	# the three basins drawn into the backdrop, and a shelf faction cannot go down there,
+	# so hard-coded x values would quietly produce a demo of two reefs and a gap.
 	var bounds := _tank.bounds()
-	var factions := _tank.available_factions
-	var spots := [
-		Vector2(bounds.size.x * 0.22, bounds.size.y * 0.62),
-		Vector2(bounds.size.x * 0.52, bounds.size.y * 0.40),
-		Vector2(bounds.size.x * 0.78, bounds.size.y * 0.66),
-	]
-	for i in mini(factions.size(), spots.size()):
-		_tank.plant_colony(factions[i], spots[i], 30.0)
+	for spec: Array in [
+		["Coral", bounds.size.x * 0.20],
+		["Kelp Court", bounds.size.x * 0.46],
+		["Vent", bounds.size.x * 0.57],
+		["Coral", bounds.size.x * 0.88],
+	]:
+		var faction := _faction(String(spec[0]))
+		if faction == null:
+			continue
+		_tank.plant_colony(faction, Vector2(_ground_x(faction, float(spec[1])), 400.0), 30.0)
+
+	# And a shoal in the commons above the middle, so the demo shows the layer that owns
+	# open water and the layer it depends on at the same time.
+	var shoal := _faction("Deep Blue")
+	if shoal != null:
+		_tank.plant_colony(shoal, Vector2(bounds.size.x * 0.46, 400.0), 30.0)
 
 	# Frame the whole map. The camera refuses to zoom out past the tank's edges, which
 	# is right in the app and wrong here: the territory wash is the subject and it is
@@ -101,15 +114,37 @@ func _setup() -> void:
 	_camera.zoom = Vector2(0.3, 0.3)
 	_next = SETTLE
 
+func _faction(name: String) -> Faction:
+	for f in _tank.available_factions:
+		if f.display_name == name:
+			return f
+	return null
+
+## The nearest x to `near` that `faction` may be founded on.
+func _ground_x(faction: Faction, near: float) -> float:
+	var bounds := _tank.bounds()
+	for step in 240:
+		for dir: float in [1.0, -1.0]:
+			var x := near + dir * float(step) * 14.0
+			if x > bounds.position.x + 80.0 and x < bounds.end.x - 80.0 \
+					and _tank.can_found(faction, x):
+				return x
+	return near
+
 ## Fast-forwards the colony simulation through the tank's own tick.
 func _advance(seconds: float) -> void:
 	for i in int(seconds / TICK):
 		_tank._tick_colonies(TICK)
 
-## The colony holding the most ground right now.
+## The BENTHIC colony holding the most ground right now.
+##
+## Benthic on purpose: bleaching the shoal would remove a band of open water and prove
+## nothing about the floor, and the floor is where the contest is.
 func _biggest() -> Colony:
 	var best: Colony = null
 	for colony in _tank.colonies():
+		if not colony.is_benthic():
+			continue
 		if best == null or colony.biomass > best.biomass:
 			best = colony
 	return best
@@ -119,6 +154,12 @@ func _report(label: String) -> void:
 	var parts: Array[String] = []
 	for faction in _tank.available_factions:
 		parts.append("%s %.1f%%" % [faction.display_name, territory.faction_share(faction) * 100.0])
+	var adrift := 0
+	for colony in _tank.colonies():
+		if not colony.is_benthic() and not colony.supported:
+			adrift += 1
+	if adrift > 0:
+		parts.append("%d shoals adrift" % adrift)
 	print("%s: %s, open water %.1f%%"
 		% [label, ", ".join(parts), territory.open_water() * 100.0])
 

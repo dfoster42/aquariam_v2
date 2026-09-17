@@ -309,6 +309,66 @@ It did not. `colony.gd`'s own docstring says age "is what makes a colony you hav
 six minutes a different thing from a fresh one", and the save wrote faction, position and
 biomass only.
 
+### Ground and water
+
+The rule the faction scheme turns on: **water is only claimable above ground you hold.**
+
+A **benthic** faction owns an interval of the seabed and extrudes a column of water upward
+from it. Its strength is a rectangle you can read without any UI — *width* is how much
+floor it holds, earned by growing and strictly zero-sum, since the seabed is 3240 units
+long and every unit gained is a unit someone lost; *height* is capped by what the faction
+is, so a reef never becomes a kelp forest. Two axes, two different actions.
+
+A **pelagic** faction owns a band of open water and nothing permanent. Above the tallest
+column everything is a commons, and only a shoal lives there — but a shoal with no reef
+rooted on the floor beneath it bleeds `decay_unsupported` biomass a second. So the open
+ocean is genuinely open, genuinely valuable, and genuinely indefensible. Support is
+deliberately **any** benthic claim, not the shoal's own: a shoal riding a rival's floor is
+the case worth having, because striking that reef starves the shoal several seconds later
+and in a different part of the frame, without ever targeting it.
+
+The roster that falls out:
+
+| faction | grip | column | ground it can take |
+| --- | ---: | ---: | --- |
+| Coral | 3.4 | 430 | the shelf, above 0.82 of map height |
+| Kelp Court | 1.4 | 1000 | almost any floor — a sliver of ground, most of the water |
+| Vent | 1.1 | 1900 | the three ravines only |
+| Deep Blue | — | band at 0.28 | the commons, while someone holds the floor below |
+
+**The ravines are the strategic feature, and they were already drawn.** A vent is gated on
+how deeply the ground is *carved*, not on how deep it is — depth cannot tell a basin from
+the landform's own low ground, and the floor at x=0 is deeper than two of the three
+basins. Carving picks out three discrete stretches, x 480-880, 1660-2020 and 2560-2940.
+They are the deepest ground on the map, so a column rising out of one reaches higher than
+anything else in the game. That is the payoff for being confined to 37% of the seabed.
+
+Three things were wrong first, each found by looking at it:
+
+**A column with a flat lid and full-width sides is a rectangle.** It drew as a block of
+colour standing on the seabed. The claim now narrows as it rises — a reef is widest where
+it is attached — and the taper is what stops it reading as architecture.
+
+**A band that fades over one cell is a painted bar.** The pelagic vertical profile faded
+over the outer sliver of its half-thickness, which at a 36-unit cell is about one cell.
+It now fades over most of it.
+
+**Pressure was measuring the wrong denominator.** `Territory.pressure_for` is
+`owned / reached`, and `reached` counted every cell the search box touched rather than
+every cell the colony could actually claim. A pelagic band is thin inside a box 2.4
+extents tall, so it scored a structurally tiny pressure, its growth ceiling collapsed to
+the `MIN_PRESSURE` floor, and a shoal shrank to a fifth of its size no matter how much
+open water it held. "Reached" has to mean "what I would own if nobody opposed me".
+
+The held seabed is painted as a bright rind rather than as more wash, because it is the
+only zero-sum ground in the game and it is where every border between two benthic factions
+actually is. It traces the terrain silhouette exactly, so you read the ground through the
+colour.
+
+Measured on the shipped map: a vent held 38.7% of the sea, was bleached for 103 biomass,
+and went to 0.0% — while the kelp faction it had been crushing went 1.5% to 28.5%, flooding
+up into the column it had been squeezed out of.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:

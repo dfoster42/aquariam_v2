@@ -41,6 +41,9 @@ func _process(_delta: float) -> bool:
 	_test_vacuum()
 	_test_bleach()
 	_test_seated_on_floor()
+	_test_column_and_commons()
+	_test_pelagic_needs_support()
+	_test_ravine_gating()
 	_test_water_denominator()
 	_test_age_round_trip()
 
@@ -80,11 +83,41 @@ func _check(condition: bool, message: String) -> void:
 	if not condition:
 		_failures.append(message)
 
+## A faction by name rather than by index.
+##
+## The roster is no longer three interchangeable reefs — it holds shelf, kelp, vent and a
+## pelagic shoal, which behave differently — so a test that wanted "two benthic rivals"
+## and took elements 0 and 1 was one roster edit away from silently testing something
+## else.
+func _faction(tank: Aquarium, name: String) -> Faction:
+	for f in tank.available_factions:
+		if f.display_name == name:
+			return f
+	_failures.append("no faction named %s in the roster" % name)
+	return null
+
+## The nearest x to `near` where `faction` is allowed to be founded.
+##
+## Factions now declare what ground they can live on, so a hard-coded position is a test
+## that breaks the day the terrain or a faction's range changes. This asks.
+func _ground_x(tank: Aquarium, faction: Faction, near: float) -> float:
+	var bounds := tank.bounds()
+	for step in 240:
+		for dir: float in [1.0, -1.0]:
+			var x := near + dir * float(step) * 14.0
+			if x > bounds.position.x + 80.0 and x < bounds.end.x - 80.0 \
+					and tank.can_found(faction, x):
+				return x
+	_failures.append("found no ground for %s near x=%.0f" % [faction.display_name, near])
+	return near
+
 # ---------------------------------------------------------------------------- 1
 
 func _test_accumulates(tank: Aquarium) -> void:
-	var faction: Faction = tank.available_factions[0]
-	var colony := tank.plant_colony(faction, Vector2(600, 1200))
+	var faction := _faction(tank, "Coral")
+	if faction == null:
+		return
+	var colony := tank.plant_colony(faction, Vector2(_ground_x(tank, faction, 1500.0), 400.0))
 	_check(colony != null, "a colony could not be founded at all")
 	if colony == null:
 		return
@@ -110,13 +143,20 @@ func _test_contested() -> void:
 	var tank := _tank()
 	if tank == null:
 		return
-	var big: Faction = tank.available_factions[0]
-	var small: Faction = tank.available_factions[1]
+	var big := _faction(tank, "Coral")
+	var small := _faction(tank, "Kelp Court")
+	if big == null or small == null:
+		return
 
-	# Same starting ground, deliberately unequal mass. The border should sit nearer the
+	# Same stretch of shelf, deliberately unequal mass. The border should sit nearer the
 	# smaller one, which is only true if influence is compared rather than distance.
-	var a := tank.plant_colony(big, Vector2(1200, 1080), 90.0)
-	var b := tank.plant_colony(small, Vector2(2040, 1080), 20.0)
+	var ax := _ground_x(tank, big, 1200.0)
+	var bx := _ground_x(tank, small, 2040.0)
+	var a := tank.plant_colony(big, Vector2(ax, 400.0), 90.0)
+	var b := tank.plant_colony(small, Vector2(bx, 400.0), 20.0)
+	if a == null or b == null:
+		_failures.append("the contested fixture did not build")
+		return
 	tank._rebuild_territory()
 	var territory := tank.territory()
 
@@ -130,7 +170,10 @@ func _test_contested() -> void:
 		"two small colonies carved up the whole map; open water should stay open")
 
 	# The border is where influence balances, so the midpoint belongs to the big one.
-	var midpoint := Vector2(1620, 1080)
+	# Sampled just above the ground, where a benthic column is at full strength — high in
+	# the water column it would be above the shorter faction's lid and prove nothing.
+	var mid_x := (ax + bx) * 0.5
+	var midpoint := Vector2(mid_x, tank.seabed().height_at(mid_x) - Territory.CELL)
 	var owner := territory.owner_at(midpoint)
 	_check(owner == a or owner == null,
 		"the midpoint between a heavy and a light colony went to the light one")
@@ -144,16 +187,23 @@ func _test_pressure() -> void:
 	var crowded := _tank()
 	if alone == null or crowded == null:
 		return
-	var lone := alone.plant_colony(alone.available_factions[0], Vector2(1620, 1080), 40.0)
+	var shelf := _faction(alone, "Coral")
+	if shelf == null:
+		return
+	var centre := _ground_x(alone, shelf, 1620.0)
+	var lone := alone.plant_colony(shelf, Vector2(centre, 400.0), 40.0)
 	_advance(alone, 90.0)
 	var lone_biomass := lone.biomass
 	alone.clear_colonies()
 	alone.queue_free()
 
-	var boxed := crowded.plant_colony(crowded.available_factions[0], Vector2(1620, 1080), 40.0)
-	# Ringed closely enough that the neighbours take the ground it would have reached.
-	for offset in [Vector2(-420, 0), Vector2(420, 0), Vector2(0, -420), Vector2(0, 420)]:
-		crowded.plant_colony(crowded.available_factions[2], Vector2(1620, 1080) + offset, 70.0)
+	var boxed := crowded.plant_colony(_faction(crowded, "Coral"), Vector2(centre, 400.0), 40.0)
+	# Flanked closely enough that the neighbours take the floor it would have reached.
+	# Left and right only: the seabed is one-dimensional, so being hemmed in is a
+	# horizontal condition now and a colony above or below would be a different rule.
+	var rival := _faction(crowded, "Kelp Court")
+	for dx: float in [-460.0, -230.0, 230.0, 460.0]:
+		crowded.plant_colony(rival, Vector2(centre + dx, 400.0), 80.0)
 	_advance(crowded, 90.0)
 	var boxed_biomass := boxed.biomass
 
@@ -171,8 +221,15 @@ func _test_vacuum() -> void:
 	var tank := _tank()
 	if tank == null:
 		return
-	var doomed := tank.plant_colony(tank.available_factions[0], Vector2(1400, 1080), 70.0)
-	var survivor := tank.plant_colony(tank.available_factions[1], Vector2(1900, 1080), 70.0)
+	var a := _faction(tank, "Coral")
+	var b := _faction(tank, "Kelp Court")
+	if a == null or b == null:
+		return
+	var doomed := tank.plant_colony(a, Vector2(_ground_x(tank, a, 1400.0), 400.0), 70.0)
+	var survivor := tank.plant_colony(b, Vector2(_ground_x(tank, b, 1900.0), 400.0), 70.0)
+	if doomed == null or survivor == null:
+		_failures.append("the vacuum fixture did not build")
+		return
 	_advance(tank, 40.0)
 	tank._rebuild_territory()
 
@@ -208,19 +265,22 @@ func _test_bleach() -> void:
 	var tank := _tank()
 	if tank == null:
 		return
-	var doomed: Faction = tank.available_factions[0]
-	var rival: Faction = tank.available_factions[1]
+	var doomed := _faction(tank, "Coral")
+	var rival := _faction(tank, "Kelp Court")
+	if doomed == null or rival == null:
+		return
 
 	# A chain of the doomed faction, each touching the next, with a rival colony sitting
 	# right at the end of it. The bleach must run the whole chain and stop at the rival.
 	var chain: Array[Colony] = []
 	var before: Array[float] = []
+	var base_x := _ground_x(tank, doomed, 1300.0)
 	for i in 4:
-		var colony := tank.plant_colony(doomed, Vector2(700 + i * 280, 1080), 60.0)
+		var colony := tank.plant_colony(doomed, Vector2(base_x + i * 300.0, 400.0), 60.0)
 		if colony != null:
 			chain.append(colony)
 			before.append(colony.biomass)
-	var neighbour := tank.plant_colony(rival, Vector2(700 + 4 * 280, 1080), 60.0)
+	var neighbour := tank.plant_colony(rival, Vector2(base_x + 4 * 300.0, 400.0), 60.0)
 	_check(chain.size() == 4 and neighbour != null, "the bleach fixture did not build")
 	if chain.size() != 4 or neighbour == null:
 		return
@@ -254,7 +314,7 @@ func _test_bleach() -> void:
 
 	# Contact, not ownership: a colony of the same faction standing on its own across
 	# the map is not part of the same disaster.
-	var isolated := tank.plant_colony(doomed, Vector2(2800, 400), 60.0)
+	var isolated := tank.plant_colony(doomed, Vector2(_ground_x(tank, doomed, 2900.0), 400.0), 60.0)
 	_check(isolated != null, "the isolated colony was not planted")
 	if isolated == null:
 		return
@@ -286,9 +346,14 @@ func _test_seated_on_floor() -> void:
 	if seabed == null:
 		return
 
+	# Kelp Court can live almost anywhere on the floor, so it is the faction that can
+	# actually be asked this across the whole map.
+	var anywhere := _faction(tank, "Kelp Court")
+	if anywhere == null:
+		return
 	# A tap high in the water column still founds the reef on the ground beneath it.
 	for x: float in [200.0, 680.0, 1440.0, 1847.0, 2754.0, 3000.0]:
-		var colony := tank.plant_colony(tank.available_factions[0], Vector2(x, 300.0))
+		var colony := tank.plant_colony(anywhere, Vector2(x, 300.0))
 		if colony == null:
 			_failures.append("no colony could be founded at x=%.0f" % x)
 			continue
@@ -334,8 +399,10 @@ func _test_water_denominator() -> void:
 		"an empty tank reports %.3f open water" % territory.open_water())
 
 	# And the books balance: what everyone holds plus what nobody holds is the whole sea.
-	tank.plant_colony(tank.available_factions[0], Vector2(900, 400), 80.0)
-	tank.plant_colony(tank.available_factions[1], Vector2(2100, 400), 80.0)
+	var one := _faction(tank, "Coral")
+	var two := _faction(tank, "Kelp Court")
+	tank.plant_colony(one, Vector2(_ground_x(tank, one, 900.0), 400.0), 80.0)
+	tank.plant_colony(two, Vector2(_ground_x(tank, two, 2100.0), 400.0), 80.0)
 	_advance(tank, 60.0)
 	tank._rebuild_territory()
 	var held := 0.0
@@ -354,7 +421,11 @@ func _test_age_round_trip() -> void:
 	var tank := _tank()
 	if tank == null:
 		return
-	var colony := tank.plant_colony(tank.available_factions[0], Vector2(1500, 400), 50.0)
+	var age_faction := _faction(tank, "Coral")
+	if age_faction == null:
+		return
+	var colony := tank.plant_colony(age_faction,
+		Vector2(_ground_x(tank, age_faction, 1500.0), 400.0), 50.0)
 	if colony == null:
 		_failures.append("could not found a colony for the age round trip")
 		return
@@ -386,3 +457,150 @@ func _test_age_round_trip() -> void:
 	restored.clear_colonies()
 	tank.queue_free()
 	restored.queue_free()
+
+# ------------------------------------------------------ ground and water
+
+## A benthic claim is a column standing on held ground: it stops at the floor, it stops
+## at its own cap, and the water above that cap belongs to nobody.
+func _test_column_and_commons() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var shelf := _faction(tank, "Coral")
+	if shelf == null:
+		return
+	var x := _ground_x(tank, shelf, 1600.0)
+	var colony := tank.plant_colony(shelf, Vector2(x, 400.0), shelf.capacity)
+	if colony == null:
+		_failures.append("the column fixture did not build")
+		return
+	tank._rebuild_territory()
+	var territory := tank.territory()
+	var ground := tank.seabed().height_at(x)
+
+	# Just above the floor: held.
+	_check(territory.owner_at(Vector2(x, ground - Territory.CELL)) == colony,
+		"the colony does not own the water directly above its own ground")
+
+	# Well above its cap: the commons. A benthic faction cannot own the open ocean, which
+	# is the rule the whole scheme turns on.
+	var above := ground - colony.extent().y - Territory.CELL * 4.0
+	if above > tank.bounds().position.y + Territory.CELL:
+		_check(territory.owner_at(Vector2(x, above)) == null,
+			"a benthic colony owns water %.0f units above its own column cap"
+				% (ground - colony.extent().y - above))
+
+	# Inside the rock: never.
+	_check(territory.owner_at(Vector2(x, ground + Territory.CELL * 3.0)) == null,
+		"a claim reaches below the seabed")
+
+	# And the cap rises with the colony. Height is what a faction IS; width is what it
+	# earned, and they are separate axes on purpose.
+	var tall := colony.extent().y
+	var young := tank.plant_colony(shelf, Vector2(_ground_x(tank, shelf, 2600.0), 400.0),
+		Colony.SEED_BIOMASS)
+	if young != null:
+		_check(young.extent().y < tall * 0.8,
+			"a seed colony's column (%.0f) is nearly as tall as a full one's (%.0f)"
+				% [young.extent().y, tall])
+		_check(tall <= shelf.reach_up + 1.0,
+			"a full column (%.0f) exceeds the faction's cap (%.0f)" % [tall, shelf.reach_up])
+
+	tank.clear_colonies()
+	tank.queue_free()
+
+## A pelagic faction owns a band of the commons, but only while something of its own is
+## rooted on the floor below it. The open ocean is valuable and indefensible.
+func _test_pelagic_needs_support() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var shoal := _faction(tank, "Deep Blue")
+	var reef := _faction(tank, "Coral")
+	if shoal == null or reef == null:
+		return
+	_check(shoal.claim == Faction.Claim.PELAGIC, "Deep Blue is not a pelagic faction")
+
+	# Unsupported: a shoal over open ground thins.
+	var x := _ground_x(tank, reef, 1500.0)
+	var adrift := tank.plant_colony(shoal, Vector2(x, 400.0), 80.0)
+	if adrift == null:
+		_failures.append("the pelagic fixture did not build")
+		return
+	_check(not adrift.is_benthic(), "a pelagic colony reports itself benthic")
+	_check(absf(adrift.global_position.y
+		- (tank.bounds().position.y + tank.bounds().size.y * shoal.altitude)) <= 1.0,
+		"a pelagic colony was not placed at its own altitude")
+
+	var started := adrift.biomass
+	_advance(tank, 30.0)
+	_check(not adrift.supported, "an unsupported shoal reports itself supported")
+	_check(adrift.biomass < started,
+		"an unsupported shoal grew from %.1f to %.1f" % [started, adrift.biomass])
+
+	var adrift_ended := adrift.biomass
+	tank.clear_colonies()
+
+	# Supported: the same shoal over a reef does not thin. The reef is a DIFFERENT
+	# faction on purpose — a shoal riding a rival's floor is the case worth having.
+	var propped := tank.plant_colony(shoal, Vector2(x, 400.0), 80.0)
+	tank.plant_colony(reef, Vector2(x, 400.0), reef.capacity)
+	tank._rebuild_territory()
+	if propped != null:
+		var held := propped.biomass
+		_advance(tank, 30.0)
+		_check(propped.supported,
+			"a shoal sitting over a reef reports itself unsupported")
+		_check(propped.biomass > held,
+			"a supported shoal went from %.1f to %.1f" % [held, propped.biomass])
+		print("  pelagic: adrift %.1f -> %.1f, over a reef %.1f -> %.1f"
+			% [started, adrift_ended, held, propped.biomass])
+
+	tank.clear_colonies()
+	tank.queue_free()
+
+## Ravine-only means ravine-only. Checked against carving rather than depth, because the
+## landform's own low ground at x=0 is deeper than two of the three basins.
+func _test_ravine_gating() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var vent := _faction(tank, "Vent")
+	if vent == null:
+		return
+	_check(vent.requires_ravine > 0.0, "the Vent faction does not require a ravine")
+	var seabed := tank.seabed()
+
+	# The map's deepest non-carved ground must be refused even though it is deep.
+	var deepest_flat := -1.0
+	var flat_x := 0.0
+	for i in 400:
+		var x := float(i) * 8.0
+		if seabed.ravine_at(x) < 1.0 and seabed.height_at(x) > deepest_flat:
+			deepest_flat = seabed.height_at(x)
+			flat_x = x
+	_check(deepest_flat > 0.0, "found no uncarved ground at all")
+	_check(not tank.can_found(vent, flat_x),
+		"a ravine faction was allowed onto uncarved ground at x=%.0f (y %.1f)"
+			% [flat_x, deepest_flat])
+	_check(tank.plant_colony(vent, Vector2(flat_x, 400.0)) == null,
+		"a ravine faction was founded on uncarved ground anyway")
+
+	# And each basin in the shipped terrain must accept one.
+	var basins := 0
+	for centre: float in [680.0, 1847.0, 2754.0]:
+		if tank.can_found(vent, centre):
+			basins += 1
+			var colony := tank.plant_colony(vent, Vector2(centre, 400.0))
+			_check(colony != null, "no vent could be founded in the basin at x=%.0f" % centre)
+	_check(basins == 3, "only %d of the 3 drawn basins accept a vent" % basins)
+
+	# A vent's column starts from the deepest ground on the map, so it out-reaches
+	# everything. That is the payoff for being confined to 3 basins.
+	var shelf := _faction(tank, "Coral")
+	if shelf != null:
+		_check(vent.reach_up > shelf.reach_up,
+			"the vent's column is not the tallest in the game")
+
+	tank.clear_colonies()
+	tank.queue_free()
