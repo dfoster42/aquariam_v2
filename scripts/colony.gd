@@ -34,6 +34,18 @@ const SEED_BIOMASS: float = 12.0
 ## anchor. Without a little slack the colony fails to claim the ground it is sitting on.
 const CRUST_DEPTH: float = 40.0
 
+## Seconds a wound takes to drain out of a colony.
+##
+## Destruction used to be instantaneous: `damage()` subtracted, the colony fell below
+## MIN_BIOMASS in the same call, and the territory pass a quarter-second later simply
+## showed a different owner. So there was no moment of destruction to look at — the frame
+## captured right after a disaster was indistinguishable from the frame two minutes
+## later, and the game's central verb had no visual payoff at all. A wound now drains
+## over this long, which makes the colony's claim RETREAT rather than vanish, because
+## influence is proportional to biomass and the territory pass runs four times a second
+## throughout.
+const DRAIN_DURATION: float = 1.4
+
 ## How hard being hemmed in bites. A colony that owns none of the ground it reaches
 ## for still grows at this fraction of its rate, so a besieged colony stalls rather
 ## than dying of geometry alone.
@@ -62,6 +74,10 @@ var supported: bool = true
 
 var _fish_debt: float = 0.0
 var _spread_timer: float = 0.0
+## Biomass a disaster has taken but that has not yet drained away. Damage is a WOUND,
+## not a subtraction — see `damage()`.
+var _draining: float = 0.0
+var _drain_rate: float = 0.0
 var _dead: bool = false
 
 @onready var sprite: Sprite2D = $Sprite2D
@@ -87,11 +103,24 @@ func _ready() -> void:
 	sprite.visible = is_benthic()
 	if not sprite.visible:
 		return
-	# Additive-ish tint rather than a flat modulate: the artwork is a dark anemone and
-	# a straight multiply by a saturated colour turns every faction into the same
-	# near-black smudge.
-	sprite.modulate = faction.color.lerp(Color.WHITE, 0.25)
+	_apply_tint()
 	_apply_size()
+
+## The colony's colour, bleached toward bone while a disaster is draining through it.
+##
+## Additive-ish tint rather than a flat modulate: the artwork is a dark anemone and a
+## straight multiply by a saturated colour turns every faction into the same near-black
+## smudge. The bleach is what makes a dying reef legible as dying rather than as merely
+## smaller — size alone is not readable over a second and a half.
+func _apply_tint() -> void:
+	if sprite == null or not sprite.visible or faction == null:
+		return
+	var base := faction.color.lerp(Color.WHITE, 0.25)
+	if _draining <= 0.0:
+		sprite.modulate = base
+		return
+	var severity := clampf(_draining / maxf(biomass + _draining, 1.0), 0.0, 1.0)
+	sprite.modulate = base.lerp(Color(0.92, 0.94, 0.9), severity * 0.85)
 
 ## Advances the colony. `delta` is already clamped by the caller.
 ##
@@ -103,6 +132,10 @@ func tick(delta: float) -> void:
 	if _dead or faction == null:
 		return
 	age += delta
+
+	_tick_drain(delta)
+	if _dead:
+		return
 
 	var ceiling := faction.capacity * maxf(pressure, MIN_PRESSURE)
 	if ceiling > 0.0:
@@ -252,17 +285,37 @@ func pay_to_spread() -> float:
 	_apply_size()
 	return cost
 
-## Takes `amount` off the colony. Returns how much was actually removed, so a caller
-## can report what a strike did.
+## Wounds the colony for `amount`, to drain away over DRAIN_DURATION. Returns how much
+## will actually be lost, so a caller can report what a disaster did.
+##
+## Deliberately not an immediate subtraction. A reef that dies between one frame and the
+## next cannot be watched dying, and watching it is the entire point of a god power.
 func damage(amount: float) -> float:
 	if _dead or amount <= 0.0:
 		return 0.0
-	var before := biomass
-	biomass = maxf(0.0, biomass - amount)
+	var takeable := minf(amount, maxf(biomass - _draining, 0.0))
+	if takeable <= 0.0:
+		return 0.0
+	_draining += takeable
+	_drain_rate = _draining / DRAIN_DURATION
+	return takeable
+
+## Bleeds out whatever a disaster has taken but not yet removed.
+func _tick_drain(delta: float) -> void:
+	if _draining <= 0.0:
+		return
+	var step := minf(_draining, _drain_rate * delta)
+	_draining -= step
+	biomass = maxf(0.0, biomass - step)
 	_apply_size()
+	_apply_tint()
 	if biomass < MIN_BIOMASS:
+		_draining = 0.0
 		_die()
-	return before - biomass
+
+## Whether a disaster is still working through this colony.
+func is_dying() -> bool:
+	return _draining > 0.0
 
 func is_dead() -> bool:
 	return _dead

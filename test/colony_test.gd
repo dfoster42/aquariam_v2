@@ -241,7 +241,15 @@ func _test_vacuum() -> void:
 	var destroyed := tank.strike(doomed.global_position)
 	_check(destroyed > 0.0, "a strike on a colony destroyed no biomass")
 
-	# Immediately after: the hole exists.
+	# A wound is not a subtraction. The colony must still be standing in the frame the
+	# strike lands in, or there is no moment of destruction to watch — which was the
+	# whole defect: the frame captured right after a disaster looked identical to the
+	# frame two minutes later.
+	_check(not doomed.is_dead(), "a struck colony died in the same call as the strike")
+	_check(doomed.is_dying(), "a struck colony is not draining")
+
+	# And then the hole opens, over about a second and a half.
+	_advance(tank, Colony.DRAIN_DURATION + 0.4)
 	var doomed_gone := doomed.is_dead() or territory.share_of_map(doomed) < doomed_before
 	_check(doomed_gone, "the struck colony holds as much ground as it did before")
 
@@ -289,6 +297,18 @@ func _test_bleach() -> void:
 	var destroyed := tank.bleach(chain[0].global_position)
 	_check(destroyed > 0.0, "a bleach on a reef destroyed nothing")
 
+	# The far end of the chain must NOT have been touched yet. A bleach is conceptually
+	# a thing spreading, and applying every hop in the same call made it arrive
+	# everywhere at once — so it could never be watched spreading.
+	_advance(tank, Aquarium.BLEACH_HOP_DELAY * 0.5)
+	_check(chain[0].is_dying() or chain[0].is_dead(),
+		"the reef the bleach started on is not affected yet")
+	_check(not chain[3].is_dying() and not chain[3].is_dead(),
+		"the far end of the chain was hit before the wave could reach it")
+
+	# Let the wave cross and drain out.
+	_advance(tank, Aquarium.BLEACH_HOP_DELAY * 5.0 + Colony.DRAIN_DURATION + 0.5)
+
 	# Every link took damage: the disaster travelled the whole chain rather than
 	# stopping at the reef it landed on.
 	var untouched: Array[int] = []
@@ -308,7 +328,12 @@ func _test_bleach() -> void:
 
 	# And it must not cross the border. A disaster that flattens everyone equally
 	# erases the map instead of redrawing it.
-	_check(not neighbour.is_dead() and is_equal_approx(neighbour.biomass, rival_before),
+	# Checked as "was never wounded" rather than "has the same biomass". The wave now
+	# takes seconds to cross, and a healthy colony grows during them — asserting an
+	# unchanged number would fail on the rival THRIVING, which is the opposite of the
+	# thing being guarded against.
+	_check(not neighbour.is_dead() and not neighbour.is_dying()
+			and neighbour.biomass >= rival_before,
 		"the bleach crossed into a rival faction: %.1f -> %.1f"
 			% [rival_before, neighbour.biomass])
 
@@ -320,6 +345,7 @@ func _test_bleach() -> void:
 		return
 	var survivors_before := tank.colonies().size()
 	tank.bleach(isolated.global_position)
+	_advance(tank, Colony.DRAIN_DURATION + 0.5)
 	_check(isolated.is_dead(), "a bleach on an isolated colony left it standing")
 	_check(tank.colonies().size() == survivors_before - 1,
 		"a bleach on an isolated colony took something else with it")

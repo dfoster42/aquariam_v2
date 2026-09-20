@@ -28,6 +28,7 @@ const FISH_SCENE: PackedScene = preload("res://scenes/fish.tscn")
 const DECOR_SCENE: PackedScene = preload("res://scenes/decor.tscn")
 const FOOD_SCENE: PackedScene = preload("res://scenes/food.tscn")
 const COLONY_SCENE: PackedScene = preload("res://scenes/colony.tscn")
+const SHOCKWAVE_SCENE: PackedScene = preload("res://scenes/shockwave.tscn")
 ## Food is cheap but not free, and a held finger can drop a lot of it.
 const MAX_FOOD: int = 250
 ## Refuse to spawn beyond this; keeps a stray tap-and-hold from hanging the app.
@@ -49,6 +50,13 @@ const TERRITORY_INTERVAL: float = 0.25
 const STRIKE_RADIUS: float = 360.0
 ## How many points across a pelagic colony's width are tested for benthic support.
 const SUPPORT_SAMPLES: int = 5
+## Seconds a bleach takes to carry from one colony to the next.
+##
+## The BFS knew the hop distance and threw it away, applying every colony's damage in the
+## same call — so a disaster that is conceptually a thing SPREADING arrived everywhere at
+## once and could not be watched spreading. Staggering by hop is what makes the wave
+## visible, and it costs one integer.
+const BLEACH_HOP_DELAY: float = 0.38
 ## Biomass a strike takes out at its centre, falling to nothing at its edge. Tuned so a
 ## single hit kills a young colony outright and badly wounds a mature one — a power
 ## that only chips at a reef gives the player nothing to watch.
@@ -121,6 +129,9 @@ var _undo_available: bool = false
 var _colonies: Array[Colony] = []
 var _territory: Territory
 var _seabed: Seabed
+## Damage that has been decided but has not landed yet: [{colony, amount, at}].
+var _pending: Array[Dictionary] = []
+var _disaster_clock: float = 0.0
 var _since_territory: float = 0.0
 
 @onready var background: Sprite2D = $Background
@@ -210,6 +221,7 @@ func _process(delta: float) -> void:
 ## 60 Hz pass would be the most expensive thing in the tank and would look exactly the
 ## same as a 4 Hz one.
 func _tick_colonies(delta: float) -> void:
+	_tick_pending(delta)
 	if _colonies.is_empty():
 		return
 	for colony: Colony in _colonies.duplicate():
@@ -220,6 +232,38 @@ func _tick_colonies(delta: float) -> void:
 		return
 	_since_territory = 0.0
 	_rebuild_territory()
+
+## Lands any scheduled damage whose moment has come.
+##
+## Kept on its own clock rather than on real time, so the fast-forward in
+## tools/colony_demo.gd and the tests drive it through exactly the path the app does.
+func _tick_pending(delta: float) -> void:
+	if _pending.is_empty():
+		return
+	_disaster_clock += delta
+	var still_waiting: Array[Dictionary] = []
+	for entry in _pending:
+		if float(entry["at"]) > _disaster_clock:
+			still_waiting.append(entry)
+			continue
+		var colony: Colony = entry["colony"]
+		if colony == null or not is_instance_valid(colony) or colony.is_dead():
+			continue
+		colony.damage(float(entry["amount"]))
+		_mark_disaster(colony.global_position, colony.extent().x,
+			colony.faction.color if colony.faction != null else Color.WHITE)
+	_pending = still_waiting
+	if _pending.is_empty():
+		_disaster_clock = 0.0
+
+## Draws a ring where a disaster just landed.
+func _mark_disaster(where: Vector2, radius: float, tint: Color) -> void:
+	if not is_node_ready():
+		return
+	var ring: Shockwave = SHOCKWAVE_SCENE.instantiate()
+	ring.configure(radius, tint)
+	ring.global_position = where
+	colony_layer.add_child(ring)
 
 ## Recomputes ownership and feeds each colony back the share of ground it holds.
 ##
@@ -339,6 +383,9 @@ func strike(position: Vector2, radius: float = STRIKE_RADIUS,
 		if distance > radius:
 			continue
 		destroyed += colony.damage(power * (1.0 - distance / radius))
+	# Marked whether or not it connected: a tap on open water that shows nothing is a
+	# tap the player cannot tell from a tap the game missed.
+	_mark_disaster(position, radius * 0.6, Color(1.0, 0.95, 0.85))
 	if destroyed > 0.0:
 		_rebuild_territory()
 	return destroyed
@@ -363,6 +410,7 @@ func bleach(position: Vector2, radius: float = STRIKE_RADIUS) -> float:
 	var faction := origin.faction
 	var frontier: Array[Colony] = [origin]
 	var strength: Dictionary = {origin: origin.biomass * BLEACH_POWER}
+	var hop: Dictionary = {origin: 0}
 	var seen: Dictionary = {origin: true}
 	var destroyed := 0.0
 
@@ -383,12 +431,21 @@ func bleach(position: Vector2, radius: float = STRIKE_RADIUS) -> float:
 			if carried < Colony.MIN_BIOMASS:
 				continue
 			strength[other] = carried
+			hop[other] = int(hop[current]) + 1
 			frontier.append(other)
 
+	# Scheduled by hop rather than applied at once, so the disaster is watched crossing
+	# the map instead of having already crossed it.
 	for colony: Colony in strength:
-		destroyed += colony.damage(float(strength[colony]))
-	if destroyed > 0.0:
-		_rebuild_territory()
+		var amount := minf(float(strength[colony]), colony.biomass)
+		if amount <= 0.0:
+			continue
+		destroyed += amount
+		_pending.append({
+			"colony": colony,
+			"amount": float(strength[colony]),
+			"at": _disaster_clock + float(hop[colony]) * BLEACH_HOP_DELAY,
+		})
 	return destroyed
 
 func _nearest_colony(position: Vector2, radius: float) -> Colony:
@@ -463,6 +520,8 @@ func seabed() -> Seabed:
 	return _seabed
 
 func clear_colonies() -> void:
+	_pending.clear()
+	_disaster_clock = 0.0
 	for colony in _colonies:
 		colony.get_parent().remove_child(colony)
 		colony.queue_free()

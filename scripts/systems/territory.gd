@@ -13,10 +13,11 @@ extends RefCounted
 ## times a second rather than per frame: territory moves at the speed colonies grow,
 ## which is nothing like 60 Hz.
 
-## World units per cell. 36 gives 90x60 over the shipped 3240x2160 map — 5400 cells,
-## cheap enough to redo several times a second and fine enough that a border reads as a
-## curve once the texture is filtered.
-const CELL: float = 36.0
+## World units per cell. 24 gives 135x90 over the shipped 3240x2160 map — 12,150 cells,
+## still trivial several times a second, and fine enough that a border reads as a curve
+## rather than as a staircase. At 36 the steps were plainly visible at the zoom a player
+## actually holds, and the seabed crust showed them worst because it traces a slope.
+const CELL: float = 24.0
 ## How many of its own radii a colony's claim can extend. The inverse-square falloff
 ## would otherwise have every colony testing every cell on the map for a contribution
 ## far below anything that could win.
@@ -24,21 +25,35 @@ const REACH: float = 2.4
 ## Influence below this is unclaimed water. Absolute rather than relative, so open
 ## ocean stays open instead of being carved up by whoever is least far away.
 const MIN_CLAIM: float = 3.0
-## Alpha the wash reaches at full confidence. Territory is a stain in the water, not a
-## coat of paint: the tank underneath has to stay the thing you are looking at.
-const MAX_ALPHA: float = 0.5
+## Alpha the wash reaches at the heart of a mature claim.
+##
+## Territory is a stain in the water, not a coat of paint. At 0.5 it was a coat of paint:
+## the washes became the most visually dominant thing on screen and the least interesting,
+## flat opaque fields that buried the fish, the colonies and the terrain underneath them.
+## The tank has to stay the thing you are looking at.
+const MAX_ALPHA: float = 0.34
 ## Alpha of the crust: the row of cells a benthic faction's held seabed runs through.
 ##
 ## Higher than the wash on purpose. The seabed is the contested real estate — 3240 units
 ## long, finite, and zero-sum, where the water above it is a commons — so the ground a
 ## faction holds should be the most saturated thing on screen, and a border between two
 ## factions should read as a seam on the floor rather than as two clouds meeting.
-const CRUST_ALPHA: float = 0.82
-## How many cell rows above the floor the crust covers.
-const CRUST_ROWS: int = 1
-## Influence at which the wash reaches MAX_ALPHA. Above a young colony's centre value,
-## so a colony's heart deepens in colour as it grows rather than starting at full.
+const CRUST_ALPHA: float = 0.6
+## How many cell rows above the floor the crust covers. Two at the finer cell size, so
+## the rind stays the same thickness in world units as it was at 36.
+const CRUST_ROWS: int = 2
+## Influence at which a claim counts as fully established. Above a young colony's centre
+## value, so a colony's heart deepens in colour as it grows rather than starting at full.
+##
+## This is no longer the alpha divisor. Dividing by an absolute constant meant a mature
+## colony — biomass 130 against a constant of 40 — was above the ceiling across almost
+## its whole claim, so the wash had no internal gradient at all and drew as a flat slab
+## with a fringe. Alpha is now taken RELATIVE to each colony's own peak, which gives
+## every claim a centre and an edge, and this constant only decides how dark a claim gets
+## to be overall.
 const FULL_INFLUENCE: float = 40.0
+## How dim the faintest new colony's heart is, against a fully established one's.
+const YOUNG_DIMMING: float = 0.55
 
 var _cols: int = 0
 var _rows: int = 0
@@ -143,20 +158,36 @@ func rebuild(colonies: Array) -> void:
 					best[key] = influence
 					_owner[key] = colony
 
+	# Each colony's own strongest influence, so the wash can be drawn relative to it.
+	var peak: Dictionary = {}
+	for key: int in _owner:
+		var owner: Colony = _owner[key]
+		peak[owner] = maxf(float(peak.get(owner, 0.0)), float(best[key]))
+
 	for key: int in _owner:
 		var colony: Colony = _owner[key]
 		_owned[colony] = int(_owned.get(colony, 0)) + 1
 		var tint := colony.faction.color if colony.faction != null else Color.WHITE
+
 		# Remapped from MIN_CLAIM rather than from zero, so alpha reaches zero exactly
-		# where the claim does. Measured against FULL_INFLUENCE alone, the faintest
-		# claimed cell still drew at 0.14 alpha against unclaimed water's 0.0, and the
-		# whole outer border came out as a hard stair-step that no amount of texture
-		# filtering could soften — it was a cliff, not an aliased slope.
-		var span := maxf(FULL_INFLUENCE - MIN_CLAIM, 0.001)
-		var strength := clampf((float(best[key]) - MIN_CLAIM) / span, 0.0, 1.0)
-		# sqrt, not linear: most of a linear fade happens in the last cell, which puts
-		# the whole transition inside one 36-unit square. This spreads it over several.
-		tint.a = MAX_ALPHA * sqrt(strength)
+		# where the claim does. Measured against an absolute ceiling, the faintest claimed
+		# cell still drew at 0.14 alpha against unclaimed water's 0.0, and the whole outer
+		# border came out as a cliff no amount of filtering could soften.
+		#
+		# And relative to THIS COLONY's peak rather than to a constant, so every claim has
+		# a centre and an edge. Against a constant, a mature colony — biomass 130 against
+		# a ceiling of 40 — sat above that ceiling across almost its entire claim and drew
+		# as a flat opaque slab with a thin fringe. Flat slabs were the single worst thing
+		# about how this looked: the most dominant element on screen and the least
+		# interesting one, burying the fish and the terrain underneath.
+		var top := maxf(float(peak.get(colony, MIN_CLAIM)), MIN_CLAIM + 0.001)
+		var strength := clampf((float(best[key]) - MIN_CLAIM) / (top - MIN_CLAIM), 0.0, 1.0)
+		# How dark a claim is allowed to get at all stays absolute, so a seedling does not
+		# paint as boldly as an established reef.
+		var standing := lerpf(YOUNG_DIMMING, 1.0, clampf(top / FULL_INFLUENCE, 0.0, 1.0))
+		# sqrt, not linear: most of a linear fade happens in the last cell, which puts the
+		# whole transition inside one cell. This spreads it over several.
+		tint.a = MAX_ALPHA * standing * sqrt(strength)
 
 		# The held seabed is drawn as a bright rind rather than as more wash. It is the
 		# only zero-sum ground in the game and it is where every border between two
@@ -164,8 +195,9 @@ func rebuild(colonies: Array) -> void:
 		# screen and legible in a thumbnail.
 		var cx := key % _cols
 		var cy := key / _cols
-		if colony.is_benthic() and cx < _floor_row.size() 				and cy >= _floor_row[cx] - CRUST_ROWS:
-			tint.a = maxf(tint.a, CRUST_ALPHA * sqrt(maxf(strength, 0.2)))
+		if colony.is_benthic() and cx < _floor_row.size() \
+				and cy >= _floor_row[cx] - CRUST_ROWS:
+			tint.a = maxf(tint.a, CRUST_ALPHA * standing * sqrt(maxf(strength, 0.25)))
 		_image.set_pixel(cx, cy, tint)
 
 	_build_adjacency()

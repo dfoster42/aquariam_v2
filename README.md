@@ -376,6 +376,57 @@ Measured on the shipped map: a vent held 38.7% of the sea, was bleached for 103 
 and went to 0.0% — while the kelp faction it had been crushing went 1.5% to 28.5%, flooding
 up into the column it had been squeezed out of.
 
+### Destruction takes time, and leaves a mark
+
+An outside model was asked for feedback on screenshots of this, with no steer about what
+to look for. Its sharpest finding: **the disaster is invisible.** The frame captured
+immediately after a faction was destroyed was indistinguishable from the frame two minutes
+later — "the consequence could just as easily be the result of the faction slowly losing
+over time. The tap-to-destroy, which is your core player verb, has no visual payoff."
+
+That was correct, and worse than it looked. `damage()` subtracted biomass, the colony fell
+below `MIN_BIOMASS` inside the same call, and the territory pass a quarter-second later
+simply showed a different owner. There was no moment of destruction to photograph because
+there was no moment. The share numbers moved dramatically — 38.7% to 0.0% — and the
+*frames* did not, which is the difference between a measurement and a clip.
+
+Three changes, and none of them is an animation bolted on top:
+
+**A wound drains rather than subtracts.** `damage()` now schedules biomass to bleed away
+over `DRAIN_DURATION`. Because influence is proportional to biomass and the territory pass
+runs four times a second throughout, the claim *retreats* instead of vanishing — the map
+animates itself, with no animation code. The colony bleaches toward bone as it drains,
+because size alone is not readable over a second and a half.
+
+**A bleach travels.** The breadth-first search already knew each colony's hop distance from
+the origin and threw it away, applying every colony's damage in the same call. A disaster
+that is conceptually a thing *spreading* therefore arrived everywhere at once and could
+never be watched spreading. Damage is now scheduled by hop, so the wave crosses the map at
+`BLEACH_HOP_DELAY` a step. That cost one integer.
+
+**Where it lands is marked.** `scripts/shockwave.gd` draws an expanding, fading ring —
+geometry rather than art, for the same reason the UI glyphs are drawn. A strike is marked
+whether or not it connects, because a tap that shows nothing is a tap the player cannot
+tell from one the game missed.
+
+### Lifting the blanket
+
+The same review called the territory washes "a blanket thrown over your game" —
+simultaneously the most visually dominant element and the least interesting one, flat
+opaque fields burying the fish, the colonies and the terrain underneath.
+
+The cause was arithmetic, not taste. Alpha was `MAX_ALPHA * sqrt(influence / FULL_INFLUENCE)`
+against an absolute `FULL_INFLUENCE` of 40, and a mature colony carries a biomass of 130 —
+so it was above that ceiling across nearly its whole claim and drew as a flat slab with a
+thin fringe. Alpha is now taken relative to **each colony's own peak**, so every claim has a
+centre and an edge, with an absolute term left in so a seedling still paints more faintly
+than an established reef. `MAX_ALPHA` came down from 0.5 to 0.34.
+
+`CELL` also went from 36 to 24 world units — 12,150 cells rather than 5,400. At 36 the
+stair-stepping was plainly visible at the zoom a player actually holds, and the seabed
+crust showed it worst because it traces a slope. **The rebuild cost under a full colony
+load has not been measured at the finer size**, only that the test suite still passes.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:

@@ -58,8 +58,22 @@ func _process(_delta: float) -> bool:
 		1:
 			_shoot("2-grown")
 			_report("before the strike")
-			_next = _frames + 4
+			# And at the zoom a player actually holds. The map-wide shots are how the
+			# mechanic is judged; this is how the game is seen.
+			_camera.setup(_tank.bounds())
+			_camera.position = Vector2(_tank.bounds().size.x * 0.48,
+				_tank.bounds().size.y * 0.5)
+			_camera.zoom = Vector2(0.62, 0.62)
+			_next = _frames + SETTLE
 		2:
+			_shoot("2b-player-view")
+			var wide := Rect2(_tank.bounds().position - _tank.bounds().size,
+				_tank.bounds().size * 3.0)
+			_camera.setup(wide)
+			_camera.position = _tank.bounds().get_center()
+			_camera.zoom = Vector2(0.3, 0.3)
+			_next = _frames + SETTLE
+		3:
 			# Strike the reef that actually holds the most ground by now — a demo that
 			# always hits whichever colony was listed first will sooner or later
 			# photograph the destruction of the smallest thing on the map.
@@ -67,11 +81,11 @@ func _process(_delta: float) -> bool:
 			var destroyed := _tank.bleach(target.global_position)
 			print("bleached %s for %.0f biomass" % [target.faction.display_name, destroyed])
 			_next = _frames + 4
-		3:
+		4:
 			_shoot("3-struck")
 			_advance(AFTERMATH_SECONDS)
 			_next = _frames + SETTLE
-		4:
+		5:
 			_shoot("4-aftermath")
 			_report("after the neighbours moved in")
 			return true
