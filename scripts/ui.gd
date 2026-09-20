@@ -51,6 +51,9 @@ const ICON_FEED: Texture2D = preload("res://assets/textures/ui/feed.png")
 const ICON_FISH: Texture2D = preload("res://assets/textures/ui/fish.png")
 const ICON_UNDO: Texture2D = preload("res://assets/textures/ui/undo.png")
 const ICON_REMOVE: Texture2D = preload("res://assets/textures/ui/remove.png")
+## The strike has no glyph of its own yet; the anemone stands in, tinted by the theme
+## like every other tile. Drawing one belongs with the rest of tools/art/draw_ui_icons.py.
+const ICON_COLONY: Texture2D = preload("res://assets/textures/anemone.png")
 
 @export var aquarium_path: NodePath = ^"../Aquarium"
 
@@ -320,6 +323,21 @@ func _build_picker() -> void:
 			_refresh_hint())
 		picker.add_child(tile)
 
+	var offered := _aquarium.placeable_factions()
+	if not offered.is_empty():
+		picker.add_child(_divider())
+	for faction in offered:
+		var tile := _tile(faction.display_name, ICON_COLONY)
+		# The tile carries the faction's own colour so the strip reads as the map does:
+		# picking the green one and watching green spread is the whole feedback loop.
+		tile.add_theme_color_override("icon_normal_color", faction.color)
+		tile.add_theme_color_override("icon_pressed_color", faction.color)
+		tile.add_theme_color_override("icon_hover_color", faction.color)
+		tile.pressed.connect(func() -> void:
+			_aquarium.select_faction(faction)
+			_refresh_hint())
+		picker.add_child(tile)
+
 	picker.add_child(_divider())
 	var feed := _tile("Feed", ICON_FEED)
 	feed.pressed.connect(func() -> void:
@@ -332,6 +350,13 @@ func _build_picker() -> void:
 		_aquarium.set_removing(true)
 		_refresh_hint())
 	picker.add_child(remove)
+
+	if not _aquarium.available_factions.is_empty():
+		var bleach := _tile("Strike", ICON_REMOVE)
+		bleach.pressed.connect(func() -> void:
+			_aquarium.set_striking(true)
+			_refresh_hint())
+		picker.add_child(bleach)
 
 	_refresh_hint()
 
@@ -369,7 +394,11 @@ func _divider() -> VSeparator:
 ## What a tap on the water will do, in words, read back from the tank rather than
 ## remembered here — the picker and the tank cannot disagree about what is armed.
 func _refresh_hint() -> void:
-	if _aquarium.removing:
+	if _aquarium.striking:
+		hint.text = "Tap the reef to strike it"
+	elif _aquarium.selected_faction != null:
+		hint.text = "Tap the floor to found %s" % _aquarium.selected_faction.display_name
+	elif _aquarium.removing:
 		hint.text = "Tap a fish or plant to remove it"
 	elif _aquarium.feeding:
 		hint.text = "Tap the water to drop food"

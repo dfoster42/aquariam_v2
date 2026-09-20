@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/colony.gd" id="1_colony"]
+[ext_resource type="Texture2D" path="res://assets/textures/anemone.png" id="2_art"]
+
+[node name="Colony" type="Node2D"]
+script = ExtResource("1_colony")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture = ExtResource("2_art")

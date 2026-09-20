@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="Faction" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction.gd" id="1_faction"]
+[ext_resource type="Resource" path="res://resources/factions/vent.tres" id="3_deep"]
+[ext_resource type="Resource" path="res://resources/species/clownfish.tres" id="2_species"]
+
+[resource]
+script = ExtResource("1_faction")
+display_name = "Coral"
+color = Color(0.98, 0.45, 0.16, 1)
+species = ExtResource("2_species")
+claim = 0
+descends_to = ExtResource("3_deep")
+descend_at = 0.45
+descend_interval = 12.0
+descend_cost = 14.0
+floor_grip = 1.9
+reach_up = 820.0
+floor_depth_range = Vector2(0, 0.78)
+capacity = 130.0
+growth_rate = 0.05
+biomass_per_fish = 26.0
+spread_interval = 14.0
+spread_at = 0.55
+spread_cost = 14.0

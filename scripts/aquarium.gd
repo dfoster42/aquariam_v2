@@ -17,12 +17,18 @@ signal species_selected(species: FishSpecies)
 signal paused_changed(paused: bool)
 signal decor_changed(count: int)
 signal food_changed(count: int)
+## Fires after a territory pass whose ownership differs from the last one.
+signal territory_changed(colonies: int)
+signal colony_founded(faction: Faction)
+signal colony_lost(faction: Faction)
 ## Fires when the undo button should enable or disable.
 signal undo_changed(available: bool)
 
 const FISH_SCENE: PackedScene = preload("res://scenes/fish.tscn")
 const DECOR_SCENE: PackedScene = preload("res://scenes/decor.tscn")
 const FOOD_SCENE: PackedScene = preload("res://scenes/food.tscn")
+const COLONY_SCENE: PackedScene = preload("res://scenes/colony.tscn")
+const SHOCKWAVE_SCENE: PackedScene = preload("res://scenes/shockwave.tscn")
 ## Food is cheap but not free, and a held finger can drop a lot of it.
 const MAX_FOOD: int = 250
 ## Refuse to spawn beyond this; keeps a stray tap-and-hold from hanging the app.
@@ -33,6 +39,40 @@ const MAX_POPULATION: int = 1500
 ## units, at the tightest about a third of one. A world-space constant would grab a fish
 ## three body-lengths away when zoomed out and miss the one under the finger zoomed in.
 const REMOVE_REACH: float = 48.0
+## Colonies a tank may hold. Territory is recomputed against every one of them, and
+## past this the map is a mosaic rather than a set of rival reefs.
+const MAX_COLONIES: int = 40
+## Seconds between territory passes. Territory moves at the speed colonies grow, which
+## is nothing like 60 Hz; recomputing it per frame would be the most expensive thing in
+## the tank and would look identical.
+const TERRITORY_INTERVAL: float = 0.25
+## World radius a strike reaches.
+const STRIKE_RADIUS: float = 360.0
+## How many points across a pelagic colony's width are tested for benthic support.
+const SUPPORT_SAMPLES: int = 5
+## How much deeper the ground has to be before it counts as a descent, in world units.
+## Without a floor on it, a colony "descends" onto the gentle dip next door forever.
+const DESCENT_DROP: float = 90.0
+## How far along the seabed a colony will look for deeper ground.
+const DESCENT_SEARCH: float = 1400.0
+## Seconds a bleach takes to carry from one colony to the next.
+##
+## The BFS knew the hop distance and threw it away, applying every colony's damage in the
+## same call — so a disaster that is conceptually a thing SPREADING arrived everywhere at
+## once and could not be watched spreading. Staggering by hop is what makes the wave
+## visible, and it costs one integer.
+const BLEACH_HOP_DELAY: float = 0.38
+## Biomass a strike takes out at its centre, falling to nothing at its edge. Tuned so a
+## single hit kills a young colony outright and badly wounds a mature one — a power
+## that only chips at a reef gives the player nothing to watch.
+const STRIKE_POWER: float = 90.0
+## Fraction of its strength a bleach keeps at each hop. Below about 0.7 it dies out
+## before it reaches the far side of a large faction, which is the whole point of it.
+const BLEACH_DECAY: float = 0.82
+## Bleach strength at the colony it starts on, as a fraction of that colony's biomass.
+## Above 1.0 so the first reef always dies outright — a disaster that leaves its origin
+## standing does not read as a disaster.
+const BLEACH_POWER: float = 1.4
 
 ## Every species the tank can spawn. Populated in the inspector — drop a new
 ## .tres in here and it appears in the picker with no code change. An exported
@@ -43,6 +83,10 @@ const REMOVE_REACH: float = 48.0
 ## Everything the player can place that is not a fish. Same contract as
 ## `available_species`: drop a .tres in and it appears in the picker.
 @export var available_decor: Array[DecorKind] = []
+
+## The reef factions that can hold ground here. Same contract again: one .tres per
+## faction, dropped in, no code.
+@export var available_factions: Array[Faction] = []
 
 ## The tank's size in world units — a map several screens wide, not one screen. The
 ## camera shows a portrait slice of it and pans across; see tools/art/draw_background.py
@@ -69,6 +113,10 @@ var selected_decor: DecorKind
 var feeding: bool = false
 ## Taps take things out instead of putting them in.
 var removing: bool = false
+## Which faction a tap founds a colony for. Null unless a faction tile is armed.
+var selected_faction: Faction
+## Taps call down a strike instead of placing anything.
+var striking: bool = false
 
 var _fish: Array[Fish] = []
 var _decor: Array[Decor] = []
@@ -83,12 +131,21 @@ var _paused: bool = false
 var _since_autosave: float = 0.0
 var _history := TankHistory.new()
 var _undo_available: bool = false
+var _colonies: Array[Colony] = []
+var _territory: Territory
+var _seabed: Seabed
+## Damage that has been decided but has not landed yet: [{colony, amount, at}].
+var _pending: Array[Dictionary] = []
+var _disaster_clock: float = 0.0
+var _since_territory: float = 0.0
 
 @onready var background: Sprite2D = $Background
 @onready var fish_layer: Node2D = $FishLayer
 @onready var decor_back: Node2D = $DecorBack
 @onready var decor_front: Node2D = $DecorFront
 @onready var food_layer: Node2D = $FoodLayer
+@onready var colony_layer: Node2D = $ColonyLayer
+@onready var territory_layer: Sprite2D = $TerritoryLayer
 
 func _ready() -> void:
 	available_species = available_species.filter(func(s: FishSpecies) -> bool: return s != null)
@@ -106,8 +163,13 @@ func _ready() -> void:
 	_food_hash = SpatialHash.new(_largest_sight())
 	selected_species = available_species[0]
 
+	available_factions = available_factions.filter(func(f: Faction) -> bool: return f != null)
+	_seabed = Seabed.new(_bounds)
+	_territory = Territory.new(_bounds, _seabed)
+
 	background.modulate = backdrop_tint
 	_fit_background()
+	_fit_territory()
 
 	# A new aquarium opens EMPTY and the player fills it. There is no seeding step:
 	# restore() simply finds nothing to restore, and the picker's hint line is the
@@ -144,6 +206,7 @@ func _process(delta: float) -> void:
 		fish.tick(step, _hash, _shelter_hash, _food_hash)
 	_reap()
 	_breed()
+	_tick_colonies(step)
 	# A fish the player placed and a shark then ate cannot be un-placed, so the button
 	# has to go dark when the last thing it could undo disappears on its own.
 	_note_undo_state()
@@ -153,6 +216,409 @@ func _process(delta: float) -> void:
 		if _since_autosave >= autosave_interval:
 			_since_autosave = 0.0
 			save()
+
+
+# ------------------------------------------------------------------- colonies
+
+## Grows every colony and refreshes the map a few times a second.
+##
+## Territory is not recomputed per frame. It moves at the speed colonies grow, so a
+## 60 Hz pass would be the most expensive thing in the tank and would look exactly the
+## same as a 4 Hz one.
+func _tick_colonies(delta: float) -> void:
+	_tick_pending(delta)
+	if _colonies.is_empty():
+		return
+	for colony: Colony in _colonies.duplicate():
+		colony.tick(delta)
+
+	_since_territory += delta
+	if _since_territory < TERRITORY_INTERVAL:
+		return
+	_since_territory = 0.0
+	_rebuild_territory()
+
+## Lands any scheduled damage whose moment has come.
+##
+## Kept on its own clock rather than on real time, so the fast-forward in
+## tools/colony_demo.gd and the tests drive it through exactly the path the app does.
+func _tick_pending(delta: float) -> void:
+	if _pending.is_empty():
+		return
+	_disaster_clock += delta
+	var still_waiting: Array[Dictionary] = []
+	for entry in _pending:
+		if float(entry["at"]) > _disaster_clock:
+			still_waiting.append(entry)
+			continue
+		var colony: Colony = entry["colony"]
+		if colony == null or not is_instance_valid(colony) or colony.is_dead():
+			continue
+		colony.damage(float(entry["amount"]))
+		_mark_disaster(colony.global_position, colony.extent().x,
+			colony.faction.color if colony.faction != null else Color.WHITE)
+	_pending = still_waiting
+	if _pending.is_empty():
+		_disaster_clock = 0.0
+
+## Draws a ring where a disaster just landed.
+func _mark_disaster(where: Vector2, radius: float, tint: Color) -> void:
+	if not is_node_ready():
+		return
+	var ring: Shockwave = SHOCKWAVE_SCENE.instantiate()
+	ring.configure(radius, tint)
+	ring.global_position = where
+	colony_layer.add_child(ring)
+
+## Recomputes ownership and feeds each colony back the share of ground it holds.
+##
+## The feedback is the whole competition model: a colony that owns the ground it
+## reaches for grows to its faction's capacity, and one boxed in by neighbours stalls.
+## Nothing else arbitrates between colonies, which means what throttles a reef is
+## exactly what the player can see on the map.
+func _rebuild_territory() -> void:
+	if _territory == null:
+		return
+	_territory.rebuild(_colonies)
+	for colony in _colonies:
+		colony.pressure = _territory.pressure_for(colony)
+		if not colony.is_benthic():
+			colony.supported = _benthic_under(colony)
+	territory_layer.texture = _territory.texture()
+	_fit_territory()
+	territory_changed.emit(_colonies.size())
+
+## Whether ANY benthic claim sits beneath `colony`, anywhere along its width.
+##
+## This is the rule that makes open water worth having and impossible to hold: a shoal
+## owns a band of the commons, but only while somebody's reef is rooted on the floor
+## below it. Deliberately not its OWN reef — requiring that made the condition almost
+## unreachable and, worse, made the interesting case impossible: a shoal living over a
+## rival's reef is a dependency the player can attack sideways. Strike the reef and the
+## shoal above it starves, several seconds later and in a different part of the frame,
+## without ever being targeted.
+##
+## Sampled across the band rather than at its centre, so a shoal half over a reef still
+## counts — losing support should take clearing the floor, not clipping one end of it.
+func _benthic_under(colony: Colony) -> bool:
+	if _territory == null or _seabed == null:
+		return true
+	var half := colony.extent().x
+	for i in SUPPORT_SAMPLES:
+		var t := 0.0 if SUPPORT_SAMPLES <= 1 else float(i) / float(SUPPORT_SAMPLES - 1)
+		var x := colony.global_position.x + lerpf(-half, half, t)
+		if x < _bounds.position.x or x > _bounds.end.x:
+			continue
+		# Just above the ground, where a benthic column is always at full strength.
+		var holder := _territory.owner_at(
+			Vector2(x, _seabed.height_at(x) - _territory.cell_size()))
+		if holder != null and holder.is_benthic():
+			return true
+	return false
+
+## Stretches the coarse ownership grid over the whole map. Linear filtering on the
+## sprite is what turns 135x90 cells into soft regions instead of a chequerboard.
+func _fit_territory() -> void:
+	if _territory == null or territory_layer == null:
+		return
+	var grid := _territory.grid_size()
+	if grid.x <= 0 or grid.y <= 0:
+		return
+	territory_layer.position = _bounds.position
+	territory_layer.scale = Vector2(
+		_bounds.size.x / float(grid.x), _bounds.size.y / float(grid.y))
+
+## Founds a colony for `faction` at `position`. Returns null when the tank is full or
+## the faction is missing.
+func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1.0) -> Colony:
+	if not is_node_ready() or faction == null or _colonies.size() >= MAX_COLONIES:
+		return null
+	var where := _bounds.get_center() if not _bounds.has_point(position) else position
+	var ground := _seabed.height_at(where.x)
+	if not can_found(faction, where.x):
+		return null
+
+	var colony: Colony = COLONY_SCENE.instantiate()
+	colony.configure(faction, start_biomass, ground)
+	# A reef grows on the ground: a tap anywhere in a column founds one on the seabed
+	# below the finger rather than leaving it hanging in open water, which is what made
+	# the colonies read as anemones floating in mid-air. A shoal instead sits in its own
+	# band, wherever the tap was in x.
+	if colony.is_benthic():
+		colony.global_position = Vector2(where.x, ground)
+	else:
+		colony.global_position = Vector2(where.x,
+			_bounds.position.y + _bounds.size.y * faction.altitude)
+	colony.released.connect(_on_colony_released)
+	colony.spreading.connect(_on_colony_spreading)
+	colony.descending.connect(_on_colony_descending)
+	colony.died.connect(_on_colony_died)
+	colony_layer.add_child(colony)
+	_colonies.append(colony)
+	_rebuild_territory()
+	colony_founded.emit(faction)
+	return colony
+
+## Whether `faction` may be founded on the ground at `x`.
+##
+## Benthic factions declare the stretch of floor they can live on as a fraction of map
+## height, which is what turns the terrain into the board: a deep faction can only take
+## the three ravines already drawn into the backdrop — about 6% of the map's floor length
+## and the deepest start in the game — while a shelf faction cannot go down there at all.
+func can_found(faction: Faction, x: float) -> bool:
+	if faction == null or _seabed == null:
+		return false
+	if faction.claim != Faction.Claim.BENTHIC:
+		return true
+	if _bounds.size.y <= 0.0:
+		return true
+	# The basins belong to whoever belongs in them, both ways round: a vent faction is
+	# refused the open floor and a shelf faction is refused a basin. One threshold and
+	# one flag, so the two can never disagree about where the boundary is.
+	var in_basin := _seabed.ravine_at(x) >= Territory.BASIN_CARVING
+	if in_basin != faction.likes_ravines:
+		return false
+	var depth := (_seabed.height_at(x) - _bounds.position.y) / _bounds.size.y
+	return depth >= faction.floor_depth_range.x and depth <= faction.floor_depth_range.y
+
+## Calls down a strike centred on `position`.
+##
+## Damage falls off linearly to nothing at the edge, so where the player taps is a
+## decision rather than a formality. Returns total biomass destroyed — what a readout
+## would report, and what the test measures.
+func strike(position: Vector2, radius: float = STRIKE_RADIUS,
+		power: float = STRIKE_POWER) -> float:
+	var destroyed := 0.0
+	for colony: Colony in _colonies.duplicate():
+		var distance := colony.global_position.distance_to(position)
+		if distance > radius:
+			continue
+		destroyed += colony.damage(power * (1.0 - distance / radius))
+	# Marked whether or not it connected: a tap on open water that shows nothing is a
+	# tap the player cannot tell from a tap the game missed.
+	_mark_disaster(position, radius * 0.6, Color(1.0, 0.95, 0.85))
+	if destroyed > 0.0:
+		_rebuild_territory()
+	return destroyed
+
+## Bleaches the reef under `position` and everything of the same faction it touches.
+##
+## A point strike turned out to be a pinprick once factions spread: measured, hitting
+## one colony of a faction holding a third of the map moved that share by 0.8 points,
+## because the faction had a dozen other colonies and none of them cared. A disaster has
+## to travel the same way the thing it is destroying travelled.
+##
+## Spreads only within one faction. A bleaching that crossed between rivals would erase
+## the borders that make the map worth looking at, and the point of the power is to open
+## ground for a rival, not to flatten everyone equally.
+##
+## Returns the biomass destroyed.
+func bleach(position: Vector2, radius: float = STRIKE_RADIUS) -> float:
+	var origin := _nearest_colony(position, radius)
+	if origin == null:
+		return 0.0
+
+	var faction := origin.faction
+	var frontier: Array[Colony] = [origin]
+	var strength: Dictionary = {origin: origin.biomass * BLEACH_POWER}
+	var hop: Dictionary = {origin: 0}
+	var seen: Dictionary = {origin: true}
+	var destroyed := 0.0
+
+	# Breadth-first across touching colonies of the same faction, losing strength at
+	# each hop, so a bleach burns out somewhere inside a large faction rather than
+	# always taking all of it.
+	while not frontier.is_empty():
+		var current: Colony = frontier.pop_front()
+		var power := float(strength[current])
+		# Neighbours by shared territory border, not by overlapping radii. The radius
+		# test could only describe circles and judged contact by geometry nobody can
+		# see; a shared cell edge is the border actually painted on screen.
+		for other in _territory.neighbours(current):
+			if seen.has(other) or other.faction != faction:
+				continue
+			seen[other] = true
+			var carried := power * BLEACH_DECAY
+			if carried < Colony.MIN_BIOMASS:
+				continue
+			strength[other] = carried
+			hop[other] = int(hop[current]) + 1
+			frontier.append(other)
+
+	# Scheduled by hop rather than applied at once, so the disaster is watched crossing
+	# the map instead of having already crossed it.
+	for colony: Colony in strength:
+		var amount := minf(float(strength[colony]), colony.biomass)
+		if amount <= 0.0:
+			continue
+		destroyed += amount
+		_pending.append({
+			"colony": colony,
+			"amount": float(strength[colony]),
+			"at": _disaster_clock + float(hop[colony]) * BLEACH_HOP_DELAY,
+		})
+	return destroyed
+
+func _nearest_colony(position: Vector2, radius: float) -> Colony:
+	var best: Colony = null
+	var best_distance := radius
+	for colony in _colonies:
+		var distance := colony.global_position.distance_to(position)
+		if distance <= best_distance:
+			best_distance = distance
+			best = colony
+	return best
+
+## A colony released a fish. It arrives at the colony's edge rather than its centre, so
+## a reef visibly seeds the water around it instead of budding fish out of its middle.
+func _on_colony_released(colony: Colony, position: Vector2) -> void:
+	if colony.faction == null or colony.faction.species == null:
+		return
+	var offset := Vector2.from_angle(randf_range(-PI, PI)) * colony.radius() * 0.8
+	var fish := spawn(colony.faction.species, position + offset, 0.0)
+	if fish != null:
+		fish.set_faction(colony.faction)
+
+## A colony wants to found a daughter. The tank arbitrates, because only it knows who
+## owns the target ground.
+##
+## Refused onto ground another faction already holds: expansion should have to go around
+## a rival or through it, never simply land behind it. Refused inside the tank's own
+## edge margin too, or reefs pile up against the glass where half their territory falls
+## off the map.
+func _on_colony_spreading(parent: Colony, position: Vector2) -> void:
+	if _colonies.size() >= MAX_COLONIES or _territory == null:
+		return
+	var margin := Colony.BASE_RADIUS
+	if position.x < _bounds.position.x + margin or position.x > _bounds.end.x - margin:
+		return
+	# Re-seated on the floor: a daughter is placed by horizontal offset and the ground
+	# under that offset is wherever the curve says, not wherever the parent happened to
+	# sit. Without this a chain of daughters walks off the terrain in a straight line.
+	position = Vector2(position.x, _seabed.height_at(position.x))
+	# Sampled a cell ABOVE the floor, not at it. The cell containing the floor is masked
+	# as rock and can never be owned, so asking who holds the exact floor height always
+	# answered "nobody" and the guard let daughters land on a rival's held ground.
+	var holder := _territory.owner_at(
+		Vector2(position.x, position.y - _territory.cell_size()))
+	if holder != null and holder.faction != parent.faction:
+		return
+	# Checked before charging. plant_colony refuses ground the faction cannot occupy —
+	# a basin, for a shelf faction — and the parent had already paid by then, so a
+	# colony budding toward a basin quietly burned biomass and got nothing for it.
+	if not can_found(parent.faction, position.x):
+		return
+	var stake := parent.pay_to_spread()
+	if stake <= 0.0:
+		return
+	if plant_colony(parent.faction, position, stake) == null:
+		# Nothing was founded, so nothing should have been spent.
+		parent.biomass += stake
+
+## A colony is losing and wants to found its successor on deeper ground.
+##
+## The tank decides where, because only it knows the terrain and who holds what. The
+## nearest legal ground wins rather than the deepest: a lineage should read as working
+## its way DOWN the slope in steps, not teleporting to the bottom of the map the first
+## time it is squeezed.
+func _on_colony_descending(parent: Colony, successor: Faction) -> void:
+	if successor == null or _colonies.size() >= MAX_COLONIES or _seabed == null:
+		return
+	var target := _deeper_ground(parent, successor)
+	if target < 0.0:
+		return
+	var stake := parent.pay_to_descend()
+	if stake <= 0.0:
+		return
+	var colony := plant_colony(successor, Vector2(target, 0.0), stake)
+	if colony == null:
+		parent.biomass += stake
+		return
+	# Marked, because a faction appearing out of nowhere on the far side of the map is
+	# otherwise the one thing in the simulation that happens with no visible cause.
+	# `colony_founded` is not emitted here: plant_colony already owns that signal.
+	_mark_disaster(colony.global_position, colony.extent().x * 0.7, successor.color)
+
+## The nearest x that `successor` may be founded on and that is meaningfully deeper than
+## `parent` stands. Negative when there is nowhere to go.
+func _deeper_ground(parent: Colony, successor: Faction) -> float:
+	var from := parent.global_position.x
+	var floor_here := _seabed.height_at(from)
+	var step := 20.0
+	var steps := int(DESCENT_SEARCH / step)
+	for i in range(1, steps + 1):
+		for dir: float in [1.0, -1.0]:
+			var x := from + dir * float(i) * step
+			if x < _bounds.position.x + Colony.BASE_RADIUS \
+					or x > _bounds.end.x - Colony.BASE_RADIUS:
+				continue
+			if _seabed.height_at(x) < floor_here + DESCENT_DROP:
+				continue
+			if not can_found(successor, x):
+				continue
+			# Never onto ground a rival already holds. A lineage has to reach past a
+			# neighbour or through it, never simply land behind it.
+			var holder := _territory.owner_at(Vector2(x, _seabed.height_at(x) - _territory.cell_size()))
+			if holder != null and holder.faction != successor and holder.faction != parent.faction:
+				continue
+			return x
+	return -1.0
+
+func _on_colony_died(colony: Colony) -> void:
+	var faction := colony.faction
+	if _detach_colony(colony):
+		colony_lost.emit(faction)
+
+func _detach_colony(colony: Colony) -> bool:
+	var index := _colonies.find(colony)
+	if index == -1:
+		return false
+	_colonies.remove_at(index)
+	colony.get_parent().remove_child(colony)
+	colony.queue_free()
+	_rebuild_territory()
+	return true
+
+func colonies() -> Array[Colony]:
+	return _colonies.duplicate()
+
+func territory() -> Territory:
+	return _territory
+
+## Where the ground is. Shared by fish, decor and colonies so they agree with the
+## backdrop about the floor.
+func seabed() -> Seabed:
+	return _seabed
+
+func clear_colonies() -> void:
+	_pending.clear()
+	_disaster_clock = 0.0
+	for colony in _colonies:
+		colony.get_parent().remove_child(colony)
+		colony.queue_free()
+	_colonies.clear()
+	_rebuild_territory()
+
+## The factions the player may found directly. Anything meant to be earned — the ravine
+## dwellers — is reachable only by a lineage descending into it.
+func placeable_factions() -> Array[Faction]:
+	return available_factions.filter(func(f: Faction) -> bool: return f.placeable)
+
+func select_faction(faction: Faction) -> void:
+	selected_faction = faction
+	selected_decor = null
+	feeding = false
+	removing = false
+	striking = false
+
+## Arms the strike: the next tap calls one down instead of placing anything.
+func set_striking(on: bool) -> void:
+	striking = on
+	if on:
+		selected_faction = null
+		selected_decor = null
+		feeding = false
+		removing = false
 
 ## Flags every fish that is inside a plant's cover, once per frame.
 ##
@@ -234,8 +700,15 @@ func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 
 	var fish: Fish = FISH_SCENE.instantiate()
 	var predators: Array[FishSpecies] = _predator_map.get(species, [] as Array[FishSpecies])
-	fish.configure(species, predators, _bounds, age)
-	fish.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	fish.configure(species, predators, _bounds, age, _seabed)
+	# Lifted out of the ground at birth, not merely on its first tick. configure() makes
+	# a fish's own movement terrain-aware, but the position written here is the raw
+	# request — so a tap on rock, a restored save, or a colony releasing at its own base
+	# put a fish inside the seabed until something moved it.
+	var at := _bounds.get_center() if not _bounds.has_point(position) else position
+	if _seabed != null:
+		at = _seabed.lift_out_of_rock(at, species.size * 0.5)
+	fish.global_position = at
 	fish.eaten.connect(_on_fish_eaten)
 
 	fish_layer.add_child(fish)
@@ -255,9 +728,18 @@ func place_selected(position: Vector2, reach: float = REMOVE_REACH) -> Node2D:
 	if removing:
 		return remove_at(position, reach)
 
+	# A strike destroys rather than places, so it is neither recorded nor undoable: the
+	# reef it took out is gone, the neighbours have already grown into the hole, and
+	# putting the biomass back would not put the map back.
+	if striking:
+		strike(position)
+		return null
+
 	var placed: Node2D = null
 	if feeding:
 		placed = drop_food(position)
+	elif selected_faction != null:
+		placed = plant_colony(selected_faction, position)
 	elif selected_decor != null:
 		placed = place_decor(selected_decor, position)
 	else:
@@ -357,10 +839,13 @@ func undo() -> bool:
 		var node: Node2D = entry.get("node")
 		var fish := node as Fish
 		var item := node as Decor
+		var colony := node as Colony
 		if fish != null:
 			_detach(fish)
 		elif item != null:
 			_detach_decor(item)
+		elif colony != null:
+			_detach_colony(colony)
 		else:
 			_detach_food(node as Food)
 		_note_undo_state()
@@ -410,6 +895,8 @@ func set_feeding(on: bool) -> void:
 	feeding = on
 	if on:
 		selected_decor = null
+		selected_faction = null
+		striking = false
 		removing = false
 
 ## Arms deletion: the next tap takes something out instead of putting something in.
@@ -417,6 +904,8 @@ func set_removing(on: bool) -> void:
 	removing = on
 	if on:
 		selected_decor = null
+		selected_faction = null
+		striking = false
 		feeding = false
 
 func _on_food_consumed(pellet: Food) -> void:
@@ -428,7 +917,10 @@ func place_decor(kind: DecorKind, position: Vector2) -> Decor:
 		return null
 	var item: Decor = DECOR_SCENE.instantiate()
 	item.configure(kind)
-	item.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	var where := _bounds.get_center() if not _bounds.has_point(position) else position
+	# Plants are rooted at their base and stand upward, so a plant placed in open water
+	# was a plant hanging in open water. Seat it on the ground under the tap.
+	item.global_position = Vector2(where.x, _seabed.height_at(where.x)) if _seabed != null else where
 	(decor_front if kind.in_front else decor_back).add_child(item)
 	_decor.append(item)
 	_rebuild_shelter()
@@ -463,6 +955,8 @@ func select_species(species: FishSpecies) -> void:
 	if species == null:
 		return
 	selected_decor = null
+	selected_faction = null
+	striking = false
 	feeding = false
 	removing = false
 	if selected_species == species:
@@ -472,6 +966,8 @@ func select_species(species: FishSpecies) -> void:
 
 func select_decor(kind: DecorKind) -> void:
 	selected_decor = kind
+	selected_faction = null
+	striking = false
 	feeding = false
 	removing = false
 
@@ -576,7 +1072,8 @@ func _fit_background() -> void:
 func restore(data: Dictionary) -> bool:
 	var entries: Array = data.get("fish", [])
 	var decor_entries: Array = data.get("decor", [])
-	if entries.is_empty() and decor_entries.is_empty():
+	var colony_entries: Array = data.get("colonies", [])
+	if entries.is_empty() and decor_entries.is_empty() and colony_entries.is_empty():
 		return false
 
 	# Decor first: plants placed before the fish means a restored tank's shelter is
@@ -590,6 +1087,22 @@ func restore(data: Dictionary) -> bool:
 		var kind: DecorKind = decor_by_path.get(entry.get("kind", ""), null)
 		if kind != null:
 			place_decor(kind, Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))))
+
+	# Colonies before fish, for the same reason decor is: a restored tank's map should
+	# be drawn on the first frame rather than a quarter of a second late.
+	var faction_by_path: Dictionary = {}
+	for f in available_factions:
+		faction_by_path[f.resource_path] = f
+	for entry: Variant in colony_entries:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var faction: Faction = faction_by_path.get(entry.get("faction", ""), null)
+		if faction != null:
+			var restored_colony := plant_colony(faction,
+				Vector2(float(entry.get("x", 0)), float(entry.get("y", 0))),
+				float(entry.get("biomass", -1.0)))
+			if restored_colony != null:
+				restored_colony.age = float(entry.get("age", 0.0))
 
 	var by_path: Dictionary = {}
 	for species in available_species:
@@ -614,7 +1127,7 @@ func restore(data: Dictionary) -> bool:
 
 	if skipped > 0:
 		push_warning("Restored %d fish; skipped %d whose species is no longer present." % [restored, skipped])
-	if restored == 0 and not _decor.is_empty():
+	if restored == 0 and (not _decor.is_empty() or not _colonies.is_empty()):
 		return true
 	if restored > 0:
 		_apply_time_away(Offline.elapsed_since(
@@ -673,7 +1186,16 @@ func _apply_time_away(seconds: float) -> void:
 		print("Away %d min: %d born, %d died of old age, %d fish now."
 			% [int(seconds / 60.0), born, died, _fish.size()])
 
+## A random point in open water. Used to seed a tank and to place the descendants an
+## absence produced.
+##
+## Seabed-aware, like the fish's own wander targets. It was not, so both paths put fish
+## inside the rock and relied on the first tick to lift them out — which meant a fish
+## saved before it had ever ticked came back somewhere else, and a save/restore round
+## trip could not be compared position for position.
 func _random_point() -> Vector2:
+	if _seabed != null:
+		return _seabed.random_water_point(24.0)
 	return Vector2(
 		randf_range(_bounds.position.x, _bounds.end.x),
 		randf_range(_bounds.position.y, _bounds.end.y))

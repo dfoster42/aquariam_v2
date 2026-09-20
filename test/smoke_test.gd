@@ -130,6 +130,13 @@ func _check_ui_passes_touches() -> void:
 ## wrong rectangle put the pause button ~500px past the right edge and the picker below
 ## the bottom one, and nothing errored — the controls existed, reported visible, and
 ## simply were not where anyone could see them.
+##
+## Content inside a ScrollContainer is exempt, and has to be: the picker strip is wider
+## than the screen ON PURPOSE — that is what scrolling it means — so the thing that must
+## be on screen is the ScrollContainer, not the row inside it. The exemption was added
+## when the strip grew past the width it had happened to fit in; before that the check
+## was passing by luck rather than by rule, and would have failed on the next species
+## anyone added.
 func _check_ui_on_screen() -> void:
 	var view := Rect2(Vector2.ZERO, _ui.get_viewport().get_visible_rect().size)
 	var offscreen: Array[String] = []
@@ -140,9 +147,21 @@ func _check_ui_on_screen() -> void:
 		var control := node as Control
 		if control == null or not control.is_visible_in_tree() or control.get_rect().get_area() <= 0.0:
 			continue
+		if _inside_scroll(control):
+			continue
 		if not view.grow(1.0).encloses(control.get_global_rect()):
 			offscreen.append("%s at %s" % [control.name, control.get_global_rect()])
 	_check(offscreen.is_empty(), "UI outside the viewport: %s" % ", ".join(offscreen))
+
+## Whether `control` is clipped by a ScrollContainer somewhere above it. The container
+## itself is not "inside" one, so it is still held to the viewport.
+func _inside_scroll(control: Control) -> bool:
+	var parent := control.get_parent()
+	while parent != null:
+		if parent is ScrollContainer:
+			return true
+		parent = parent.get_parent()
+	return false
 
 
 ## The inset arithmetic, on rectangles the platform will not produce headlessly.

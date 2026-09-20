@@ -174,12 +174,31 @@ static func capture(tank: Aquarium) -> Dictionary:
 			"y": roundi(item.global_position.y),
 		})
 
+	# Colonies are the one thing in the tank that is worth more the longer it has
+	# existed, so biomass is saved with them: restoring a mature reef as a seed would
+	# quietly undo however long the player spent growing it.
+	var colonies: Array = []
+	for colony in tank.colonies():
+		if colony == null or colony.faction == null or colony.is_dead():
+			continue
+		colonies.append({
+			"faction": colony.faction.resource_path,
+			"x": roundi(colony.global_position.x),
+			"y": roundi(colony.global_position.y),
+			"biomass": snappedf(colony.biomass, 0.01),
+			# Saved because colony.gd's own docstring says age "is what makes a colony
+			# you have had for six minutes a different thing from a fresh one" — and
+			# every relaunch was silently throwing it away.
+			"age": roundi(colony.age),
+		})
+
 	return {
 		"version": FORMAT_VERSION,
 		"saved_at": int(Time.get_unix_time_from_system()),
 		"selected": tank.selected_species.resource_path if tank.selected_species else "",
 		"fish": fish,
 		"decor": decor,
+		"colonies": colonies,
 	}
 
 static func save(tank: Aquarium, slot_id: String = "") -> Error:

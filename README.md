@@ -180,6 +180,392 @@ past the sprite's edge at full lean and would otherwise clip the tips.
 Decor is saved with the tank, and restored *before* the fish, so a reloaded tank's
 shelter is in effect on the first frame rather than one frame late.
 
+## Colonies, territory, and the god-sim prototype
+
+An experiment, not a direction that has been committed to. The question it exists to
+answer is narrow: **is any of this worth watching?**
+
+The tank as it stands is unclippable. It is calm, it is pretty, and nothing that happens
+in it changes it — a fish spawns, breeds, is eaten, and the tank afterwards is
+indistinguishable from the tank before. Nothing accumulates, so nothing can be lost, so
+there is no moment worth showing anyone. A colony is the first object here that does
+accumulate.
+
+A `Faction` is a colour and a fish. A `Colony` is one faction's foothold: it holds
+`biomass`, grows logistically, claims ground, releases fish tinted to match, and can be
+destroyed. `Territory` computes who owns what as a 135x90 influence grid over the map and
+paints it as one filtered texture — that layer is the entire reason the rest is legible.
+Without it a disaster kills an object; with it a disaster opens a hole that the
+neighbours visibly flow into.
+
+Three things were wrong on the first try, and each was found by measuring rather than by
+thinking about it.
+
+**Colonies that only grow in place never make a map.** Three reefs left alone held 12.8%
+of the ground each with 61.8% open water between them, and striking one moved its
+neighbours by 0.2 points. They were never touching, so there was no border to redraw.
+Colonies now spread — a mature one with room pays biomass to found a daughter just past
+its own edge — and open water fell to 18.8%.
+
+**A point strike is a pinprick against a faction that has spread.** Bleaching one colony
+of a faction holding a third of the map moved that share by 0.8 points, because the
+faction had a dozen others and none of them cared. A disaster has to travel the way the
+thing it is destroying travelled: `bleach()` runs breadth-first across touching colonies
+of *one* faction, losing strength at each hop. It burns out on purpose — one tap should
+not flatten a map-spanning faction — and it stops dead at a rival's border, because a
+disaster that flattens everyone equally erases the map instead of redrawing it.
+
+**A hard claim threshold is a visible staircase.** The faintest claimed cell drew at
+0.14 alpha against open water's zero, and the whole outer border came out as a cliff
+that no amount of texture filtering could soften. Alpha is now remapped from the claim
+threshold rather than from zero, so it reaches zero exactly where the claim does.
+
+With all three in place: Deep Blue held 32.8% of the map, was bleached for 236 biomass,
+and went to 0.0% while Kelp Court climbed 15.3% to 24.1%. That before-and-after is the
+thing the experiment was for.
+
+```bash
+godot --headless --script res://test/colony_test.gd        # the five checks
+godot --script res://tools/colony_demo.gd -- --out-dir /tmp/shots
+```
+
+The demo fast-forwards through the tank's own `_tick_colonies` rather than waiting for
+frames. The first version of it waited 240 frames — four seconds — for growth that takes
+a minute, photographed three untouched seed colonies, and reported that nothing happened.
+
+**Known gaps.** Colonies are saved with their biomass but offline progression ignores
+them, so a tank left overnight comes back with its map exactly as it was. Remove mode
+does not take out a colony — `strike` and `bleach` are the verbs for that — though undo
+does take back one you just placed. The Strike tile borrows the Remove glyph, and the
+faction tiles borrow the anemone.
+
+## The simulation knows where the ground is
+
+`tools/art/draw_background.py` draws a sculpted sea floor, and for a long time it had the
+only copy of that curve. Nothing in the tank knew the floor existed, so:
+
+- decor floated in mid-water, because a plant went wherever the finger landed
+- colonies floated in mid-water, for the same reason
+- **fish swam through the 13-36% of every column painted as solid rock**
+
+Nobody noticed the third one because nothing else knew either. `scripts/systems/seabed.gd`
+is a transliteration of `terrain_level`, `ravine_depth` and `floor_height`, and it is exact
+rather than approximate: the Python takes `t = x / width`, so the curve is scale-invariant
+in x, and `_fit_background()` computes a cover scale of exactly 1.0 — backdrop pixel
+(x, y) *is* world (x, y). The shipped floor spans y 1380.6 to 1871.2, and water is
+**76.6%** of the tank's rectangle.
+
+The two implementations share no source of truth, so `test/seabed_test.gd` pins them
+together against values dumped from the Python. If the art is redrawn with different
+constants, that test is what says so, rather than the floor silently sliding out from
+under everything.
+
+**The three ravines are live.** `draw_background.py` carries a comment saying "No ravines
+for now" — it refers only to a deleted dark-fill layer, while `RAVINES` has three entries
+and `floor_height` defaults to carved. There are real basins at x roughly 680, 1847 and
+2754, and a port that believed the comment would have missed them.
+
+### A claim is a vector, not a distance
+
+`Colony.influence_at()` took a scalar distance, which can only ever describe a circle.
+Territory had already computed the offset vector and threw the direction away on the next
+line. It now takes the whole offset and divides per axis by `Colony.extent()`, which the
+faction's own claim parameters shape — so a claim can be a crust hugging the floor or a
+plume rising off a vent. (An early version routed this through a `Faction.shape` vector;
+that was superseded by the claim kinds below and no such property exists.) Measured, the old circular
+claim was a 922-unit disc inside a 1384-unit water column — it was not merely reading as
+top-down, it was geometrically incapable of reading as anything else.
+
+Two things fell out of that change:
+
+**Anisotropy made the rebuild cheaper.** The search box is per-axis now, so a wide flat
+strip or a tall narrow one both visit fewer cells than the square that bounded the old
+disc.
+
+**The claims had been rectangles all along.** Territory only visits cells within `REACH`
+extents, and an inverse square has not decayed anywhere near `MIN_CLAIM` by then — at
+biomass 130 the influence at the box edge was still 19 against a threshold of 3. Every
+mature colony's territory was a hard-edged rectangle the size of its search box, which
+the floor mask made obvious by clipping the bottom off it. Influence now tapers to
+nothing over the outer quarter of the box, so the claim ends where the falloff says.
+
+### Shares are fractions of the sea
+
+Territory divided every share by `_cols * _rows`, ground included. A faction holding every
+drop of water on the map could never report above 0.766, and `open_water()` counted bedrock
+as open. Cells are masked once at startup — the floor never moves — and every share is
+divided by the water cells. The earlier "32.8% of the map" figures were understated by
+about 30% for this reason.
+
+### Disasters travel along the border you can see
+
+`bleach()` decided which colonies touched by comparing the sum of two radii against their
+separation. That test could only describe circles, and it judged contact by geometry
+nobody can see — two colonies whose discs overlapped counted as touching even with a third
+faction's territory wedged between them. Adjacency is now built from shared territory-cell
+edges during the same pass that paints them, so a bleach runs along the line on screen.
+
+### Colony age survives a relaunch
+
+It did not. `colony.gd`'s own docstring says age "is what makes a colony you have had for
+six minutes a different thing from a fresh one", and the save wrote faction, position and
+biomass only.
+
+### Ground and water
+
+The rule the faction scheme turns on: **water is only claimable above ground you hold.**
+
+A **benthic** faction owns an interval of the seabed and extrudes a column of water upward
+from it. Its strength is a rectangle you can read without any UI — *width* is how much
+floor it holds, earned by growing and strictly zero-sum, since the seabed is 3240 units
+long and every unit gained is a unit someone lost; *height* is capped by what the faction
+is, so a reef never becomes a kelp forest. Two axes, two different actions.
+
+A **pelagic** faction owns a band of open water and nothing permanent. Above the tallest
+column everything is a commons, and only a shoal lives there — but a shoal with no reef
+rooted on the floor beneath it bleeds `decay_unsupported` biomass a second. So the open
+ocean is genuinely open, genuinely valuable, and genuinely indefensible. Support is
+deliberately **any** benthic claim, not the shoal's own: a shoal riding a rival's floor is
+the case worth having, because striking that reef starves the shoal several seconds later
+and in a different part of the frame, without ever targeting it.
+
+The roster that falls out:
+
+| faction | grip | column | ground it can take |
+| --- | ---: | ---: | --- |
+| Coral | 1.9 | 820 | open floor, down to 0.78 of map height |
+| Kelp Court | 1.4 | 1000 | open floor, down to 0.86 — a sliver of ground, most of the water |
+| Vent | 0.7 | 1400 | the three basins only, and not placeable at all |
+| Deep Blue | — | band at 0.28 | the commons, while someone holds the floor below |
+
+Those numbers are the shipped ones and several of them moved during balancing; see
+"Balance is measured, not eyeballed" and "Working downward" below for what moved and why.
+
+**The ravines are the strategic feature, and they were already drawn.** A vent is gated on
+how deeply the ground is *carved*, not on how deep it is — depth cannot tell a basin from
+the landform's own low ground, and the floor at x=0 is deeper than two of the three
+basins. Carving picks out three discrete stretches, x 480-880, 1660-2020 and 2560-2940.
+They are the deepest ground on the map, so a column rising out of one reaches higher than
+anything else in the game. That is the payoff for being confined to 37% of the seabed.
+
+Four things were wrong first, each found by looking at it:
+
+**A shoal was drawing an anemone in mid-water.** Seating the colonies fixed the benthic
+ones and left the pelagic ones hanging at their band altitude, still drawing the seabed
+sprite — so the floating anemones the whole exercise was meant to remove came straight
+back, in the one place the geometry could not fix them. A pelagic faction owns nothing
+permanent, so it draws nothing: its claim is the band, and the fish it releases are what
+you see. `colony_test` now asserts that anything drawing a sprite is on the floor.
+
+**A column with a flat lid and full-width sides is a rectangle.** It drew as a block of
+colour standing on the seabed. The claim now narrows as it rises — a reef is widest where
+it is attached — and the taper is what stops it reading as architecture.
+
+**A band that fades over one cell is a painted bar.** The pelagic vertical profile faded
+over the outer sliver of its half-thickness, which at a 36-unit cell is about one cell.
+It now fades over most of it.
+
+**Pressure was measuring the wrong denominator.** `Territory.pressure_for` is
+`owned / reached`, and `reached` counted every cell the search box touched rather than
+every cell the colony could actually claim. A pelagic band is thin inside a box 2.4
+extents tall, so it scored a structurally tiny pressure, its growth ceiling collapsed to
+the `MIN_PRESSURE` floor, and a shoal shrank to a fifth of its size no matter how much
+open water it held. "Reached" has to mean "what I would own if nobody opposed me".
+
+The held seabed is painted as a bright rind rather than as more wash, because it is the
+only zero-sum ground in the game and it is where every border between two benthic factions
+actually is. It traces the terrain silhouette exactly, so you read the ground through the
+colour.
+
+Measured on the shipped map: a vent held 38.7% of the sea, was bleached for 103 biomass,
+and went to 0.0% — while the kelp faction it had been crushing went 1.5% to 28.5%, flooding
+up into the column it had been squeezed out of.
+
+### Destruction takes time, and leaves a mark
+
+An outside model was asked for feedback on screenshots of this, with no steer about what
+to look for. Its sharpest finding: **the disaster is invisible.** The frame captured
+immediately after a faction was destroyed was indistinguishable from the frame two minutes
+later — "the consequence could just as easily be the result of the faction slowly losing
+over time. The tap-to-destroy, which is your core player verb, has no visual payoff."
+
+That was correct, and worse than it looked. `damage()` subtracted biomass, the colony fell
+below `MIN_BIOMASS` inside the same call, and the territory pass a quarter-second later
+simply showed a different owner. There was no moment of destruction to photograph because
+there was no moment. The share numbers moved dramatically — 38.7% to 0.0% — and the
+*frames* did not, which is the difference between a measurement and a clip.
+
+Three changes, and none of them is an animation bolted on top:
+
+**A wound drains rather than subtracts.** `damage()` now schedules biomass to bleed away
+over `DRAIN_DURATION`. Because influence is proportional to biomass and the territory pass
+runs four times a second throughout, the claim *retreats* instead of vanishing — the map
+animates itself, with no animation code. The colony bleaches toward bone as it drains,
+because size alone is not readable over a second and a half.
+
+**A bleach travels.** The breadth-first search already knew each colony's hop distance from
+the origin and threw it away, applying every colony's damage in the same call. A disaster
+that is conceptually a thing *spreading* therefore arrived everywhere at once and could
+never be watched spreading. Damage is now scheduled by hop, so the wave crosses the map at
+`BLEACH_HOP_DELAY` a step. That cost one integer.
+
+**Where it lands is marked.** `scripts/shockwave.gd` draws an expanding, fading ring —
+geometry rather than art, for the same reason the UI glyphs are drawn. A strike is marked
+whether or not it connects, because a tap that shows nothing is a tap the player cannot
+tell from one the game missed.
+
+### Lifting the blanket
+
+The same review called the territory washes "a blanket thrown over your game" —
+simultaneously the most visually dominant element and the least interesting one, flat
+opaque fields burying the fish, the colonies and the terrain underneath.
+
+The cause was arithmetic, not taste. Alpha was `MAX_ALPHA * sqrt(influence / FULL_INFLUENCE)`
+against an absolute `FULL_INFLUENCE` of 40, and a mature colony carries a biomass of 130 —
+so it was above that ceiling across nearly its whole claim and drew as a flat slab with a
+thin fringe. Alpha is now taken relative to **each colony's own peak**, so every claim has a
+centre and an edge, with an absolute term left in so a seedling still paints more faintly
+than an established reef. `MAX_ALPHA` came down from 0.5 to 0.34.
+
+`CELL` also went from 36 to 24 world units — 12,150 cells rather than 5,400. At 36 the
+stair-stepping was plainly visible at the zoom a player actually holds, and the seabed
+crust showed it worst because it traces a slope. **The rebuild cost under a full colony
+load has not been measured at the finer size**, only that the test suite still passes.
+
+### What a territory rebuild costs
+
+`tools/territory_benchmark.gd`. The cell size was cut from 36 world units to 24 on how it
+looked, with nobody knowing what it cost. It cost a great deal.
+
+| | ns per cell visited | 40 colonies at CELL 24 |
+| --- | ---: | ---: |
+| as written | ~920 | ~212 ms (projected) |
+| search box bounded to the real claim | ~920 | 136.7 ms |
+| `REACH` 2.4 -> 1.7 | ~920 | 115.9 ms |
+| packed arrays and a static kernel | **288** | **35.7 ms** |
+
+35.7 ms four times a second is 14.3% of the machine at the worst case the cap allows —
+forty colonies, every one of them mature. It is 6x cheaper than the same grid written the
+obvious way, and still cheaper than the *coarser* grid was before any of this.
+
+Three findings, and only one of them is about the cell size:
+
+**The search box was 2.4x too tall.** Territory bounded its search at `extent * REACH` on
+both axes. That is right laterally, where the inverse-square tail lives, and wrong
+vertically, because a claim is hard zero above its lid and below the floor. A vent with a
+1900-unit column had 4560 units of water scanned for it — the whole height of the map —
+almost all of it cells it could never claim. Colonies now state their own non-zero region
+through `reach_box()` rather than having Territory guess it.
+
+**The cost was per-cell overhead, not cell count.** At ~920 ns for every cell looked at
+against maybe a tenth of that in actual arithmetic, the rest was interpreter: an instance
+method call, two `Vector2` constructions, and two `Dictionary` operations on every cell.
+Ownership moved to `PackedInt32Array`/`PackedFloat32Array` indexed by cell, the per-colony
+counters became locals, and the kernel became a static function taking plain floats.
+288 ns/cell.
+
+**Anisotropy really did make it cheaper**, as claimed earlier — but the claim was made
+about a rebuild that was three times more expensive than it needed to be, which is not
+much of a defence.
+
+### Balance is measured, not eyeballed
+
+`tools/balance.gd` runs many randomised starts and reports each faction's mean share, its
+range, and how often it is wiped out.
+
+It exists because balance was being read off `tools/colony_demo.gd`, which plants the same
+factions at the same positions every run — so it measures the layout, not the factions. On
+that fixed layout Kelp held 30% and Coral 4%, and two rounds of tuning went into "fixing"
+a Coral that was not broken: it had been seeded between two rivals, and its other colony
+sat at the map edge where it could only spread one way. Randomised, the same build reads
+Coral 15.7% and Kelp 11.9%, and the actual outlier was the Vent at 32.4%.
+
+Two real defects did come out of it:
+
+**A faction was punished for succeeding.** Daughters were founded 1.2 extents from their
+parent, well inside its 1.7-extent claim, so siblings spent their lives taking cells off
+each other. Every cell a daughter took was one the parent had "lost", pressure collapsed
+for both, and since spreading itself requires pressure above a half, whichever faction
+spread first drove everyone's pressure down and locked the rest out permanently. The map
+settled into stunted colonies at a quarter of their capacity. Daughters now clear the
+parent's claim.
+
+**Making pressure faction-wide is a runaway, and was tried.** Counting every cell a faction
+holds anywhere as friendly means the more ground it has the faster it grows and spreads:
+one faction pinned at pressure 1.00, reached thirty-six colonies and 55% of the sea while
+every rival sat at 0.00 and died. Pressure stays per colony; the self-punishment is fixed
+where it is caused.
+
+After that, and dropping the vent's column from 1900 to 1400 — it still tops out highest
+in the game, because it starts from the deepest ground — 20 runs of 7 simulated minutes:
+
+| faction | mean share | range | wiped out |
+| --- | ---: | :---: | ---: |
+| Coral | 17.6% | 0.4-41.7% | 0/20 |
+| Kelp Court | 17.0% | 0.1-36.0% | 0/20 |
+| Vent | 15.0% | 0.0-37.5% | 0/20 |
+| Deep Blue | 15.1% | 8.5-18.9% | 0/20 |
+
+The ranges are wide on purpose: where you are seeded matters, and three basins is a small
+number to share. What matters is that the means are within 2.6 points and nothing is
+eliminated.
+
+### Working downward: ground that has to be earned
+
+The upward half of the vertical axis was always there — a benthic faction grows a taller
+column. This is the other half: a faction that is **losing** reaches down, and what it
+founds on the way down is a different faction on ground it could not otherwise have.
+
+**The trigger is being beaten, not a timer.** A colony whose `pressure` falls below
+`descend_at` starts looking for deeper ground; one holding its own has no reason to leave.
+That makes the player's attacks the cause of the descent — squeeze a shelf faction hard
+enough and its answer is to colonise the basins you were keeping empty. The parent pays
+`descend_cost` and survives: a lineage reaches down, it does not migrate.
+
+**The ravines are no longer a picker tile.** `Faction.placeable` is false for the vent, so
+the most restricted real estate on the map stopped being the cheapest thing to acquire.
+`tools/balance.gd` seeds only placeable factions, which is what the player can actually
+start from; whether a vent exists at all in a run is an outcome, not a setup.
+
+Four things were wrong on the way:
+
+**Raising the cost of descending made it rarer, not stronger.** The obvious fix for a
+beachhead that cannot establish is to send more with it — but the colonies that qualify are
+by definition the ones doing badly, and at a cost of 30 the descent fired in two runs of
+ten instead of nine. The beachhead's problem was never its size.
+
+**Substrate gated founding but not holding.** A shelf faction rooted beside a basin was
+barred from it and still projected across it at full strength, so a descended colony
+arrived under a rival's full weight and never established — vents reached nine runs in ten
+and held 2.6% of the sea between them. A benthic claim is now weighted by the kind of
+ground under each column, not only by where its colony stands.
+
+**Depth is not the same thing as a basin, and keying on depth handed two of the three
+away.** The basin at x=1847 sits at 0.71 of map height while the *uncarved* floor at x=0
+is at 0.87. The gate and the weighting both key on carving.
+
+**The gate had to run both ways.** Barring a vent from the open floor while letting a shelf
+faction into a basin means the deep is not earned, it is merely inconvenient. One threshold
+and one flag — `likes_ravines` — so the two can never disagree about where the boundary is.
+
+Ten runs of six simulated minutes, seeding only what a player can place:
+
+| faction | mean share | colonies | wiped out |
+| --- | ---: | ---: | ---: |
+| Coral | 19.2% | 2.0 | 0/10 |
+| Kelp Court | 15.1% | 6.1 | 0/10 |
+| Vent | 9.0% | 6.7 | 0/10 |
+| Deep Blue | 17.4% | 11.4 | 0/10 |
+
+The vent is the smallest because it holds three short stretches of seabed, and it is never
+wiped out because a lineage reaches one in every run. It is nobody's starting position and
+it is always somebody's ending one.
+
+One regression worth recording: cutting `REACH` from 2.4 to 1.7 for the rebuild's sake
+narrowed the band the lateral taper fades across, and the hard-edged rectangles came back.
+Where a fade BEGINS is free while how far the box reaches is not, so the taper now starts
+about a third of the way out instead of two thirds.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:

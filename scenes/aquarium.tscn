@@ -11,14 +11,26 @@
 [ext_resource type="Resource" path="res://resources/species/yellowtang.tres" id="6_8dbdb"]
 [ext_resource type="Resource" path="res://resources/decor/kelp.tres" id="7_g8q5e"]
 [ext_resource type="Resource" path="res://resources/decor/anemone.tres" id="8_roldy"]
+[ext_resource type="Script" path="res://scripts/faction.gd" id="9_fact"]
+[ext_resource type="Resource" path="res://resources/factions/coral.tres" id="10_coral"]
+[ext_resource type="Resource" path="res://resources/factions/kelp_court.tres" id="11_kelp"]
+[ext_resource type="Resource" path="res://resources/factions/deepblue.tres" id="12_deep"]
+[ext_resource type="Resource" path="res://resources/factions/vent.tres" id="13_vent"]
 
 [node name="Aquarium" type="Node2D" unique_id=562826831]
 script = ExtResource("1_aquarium")
 available_species = Array[ExtResource("2_5dg5m")]([ExtResource("3_71x8f"), ExtResource("4_odjgq"), ExtResource("5_roldy"), ExtResource("6_8dbdb"), ExtResource("5_6g8si")])
 available_decor = Array[ExtResource("6_6g8si")]([ExtResource("7_g8q5e"), ExtResource("8_roldy")])
+available_factions = Array[ExtResource("9_fact")]([ExtResource("10_coral"), ExtResource("11_kelp"), ExtResource("13_vent"), ExtResource("12_deep")])
 
 [node name="Background" type="Sprite2D" parent="." unique_id=709158858]
 texture = ExtResource("2_background")
+
+[node name="TerritoryLayer" type="Sprite2D" parent="." unique_id=331902447]
+texture_filter = 2
+centered = false
+
+[node name="ColonyLayer" type="Node2D" parent="." unique_id=182364911]
 
 [node name="DecorBack" type="Node2D" parent="." unique_id=715803886]
 
