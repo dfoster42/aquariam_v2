@@ -58,6 +58,21 @@ const CRUST_ROWS: int = 2
 const FULL_INFLUENCE: float = 40.0
 ## How dim the faintest new colony's heart is, against a fully established one's.
 const YOUNG_DIMMING: float = 0.55
+## What a benthic claim is worth over ground its faction could not live on.
+##
+## Substrate used to gate only where a colony could be FOUNDED, not where it could hold.
+## So a shelf faction rooted on good ground still projected at full strength across the
+## basin next door — ground it is forbidden to occupy — and a lineage that had worked its
+## way down into that basin arrived as a fourteen-biomass beachhead under a rival's full
+## weight and never established. Measured: vents reached in nine runs of ten and held
+## 2.6% of the sea between them.
+##
+## Not zero, because a claim should thin over wrong ground rather than stop at a line
+## nobody drew.
+const FOREIGN_GROUND: float = 0.22
+## Carving, in world units, at which the floor counts as a basin rather than open floor.
+## Matches the gate a ravine faction is founded under.
+const BASIN_CARVING: float = 60.0
 
 var _cols: int = 0
 var _rows: int = 0
@@ -85,6 +100,8 @@ var _water: PackedByteArray = PackedByteArray()
 var _water_cells: int = 0
 ## Column -> the lowest water row in it, i.e. the row the seabed runs through.
 var _floor_row: PackedInt32Array = PackedInt32Array()
+## Column -> 1 when the floor there is inside a basin, 0 on the open floor.
+var _carved: PackedByteArray = PackedByteArray()
 var _image: Image
 var _texture: ImageTexture
 ## Cells examined by the last rebuild. Diagnostic only — tools/territory_benchmark.gd
@@ -118,8 +135,11 @@ func _mask_water() -> void:
 	_water.fill(0)
 	_water_cells = 0
 	_floor_row.resize(_cols)
+	_carved.resize(_cols)
 	for cx in _cols:
 		_floor_row[cx] = _rows - 1
+		var x := _bounds.position.x + (cx + 0.5) * _cell
+		_carved[cx] = 1 if (_seabed != null and _seabed.ravine_at(x) >= BASIN_CARVING) else 0
 	for cy in _rows:
 		for cx in _cols:
 			var centre := _bounds.position + Vector2((cx + 0.5) * _cell, (cy + 0.5) * _cell)
@@ -168,6 +188,11 @@ func rebuild(colonies: Array) -> void:
 		var benthic := colony.is_benthic()
 		var ex := extent.x
 		var ey := extent.y
+		# Whether this faction belongs in a basin, so its claim can be weighted by the
+		# kind of ground under each column rather than only by where it was founded.
+		var wants_basin := 0
+		if benthic and colony.faction != null and colony.faction.likes_ravines:
+			wants_basin = 1
 		var local := colony.global_position - _bounds.position
 		var min_x := maxi(0, floori((local.x + box.position.x) / _cell))
 		var max_x := mini(_cols - 1, floori((local.x + box.end.x) / _cell))
@@ -189,6 +214,11 @@ func rebuild(colonies: Array) -> void:
 					continue
 				var dx := (cx + 0.5) * _cell - local.x
 				var influence := Colony.influence_for(dx, dy, mass, ex, ey, benthic)
+				# Weighted by the kind of ground under THIS column, not just by where the
+				# colony was founded. One array lookup and a compare; it is what makes a
+				# basin defensible by whoever can actually live in one.
+				if benthic and _carved[cx] != wants_basin:
+					influence *= FOREIGN_GROUND
 				if influence < MIN_CLAIM:
 					continue
 				# Counted only where the colony could actually claim, not everywhere its

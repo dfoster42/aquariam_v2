@@ -44,6 +44,8 @@ func _process(_delta: float) -> bool:
 	_test_column_and_commons()
 	_test_pelagic_needs_support()
 	_test_ravine_gating()
+	_test_descent()
+	_test_earned_ground()
 	_test_water_denominator()
 	_test_age_round_trip()
 
@@ -282,13 +284,18 @@ func _test_bleach() -> void:
 	# right at the end of it. The bleach must run the whole chain and stop at the rival.
 	var chain: Array[Colony] = []
 	var before: Array[float] = []
-	var base_x := _ground_x(tank, doomed, 1300.0)
+	# Each link placed on ground the faction may actually hold, walking rightward. A
+	# fixed stride put links inside basins, which a shelf faction is now refused.
+	var base_x := _ground_x(tank, doomed, 900.0)
+	var at := base_x
 	for i in 4:
-		var colony := tank.plant_colony(doomed, Vector2(base_x + i * 300.0, 400.0), 60.0)
+		at = _ground_x(tank, doomed, at) if i == 0 else _ground_x(tank, doomed, at + 300.0)
+		var colony := tank.plant_colony(doomed, Vector2(at, 400.0), 60.0)
 		if colony != null:
 			chain.append(colony)
 			before.append(colony.biomass)
-	var neighbour := tank.plant_colony(rival, Vector2(base_x + 4 * 300.0, 400.0), 60.0)
+	var neighbour := tank.plant_colony(rival,
+		Vector2(_ground_x(tank, rival, at + 300.0), 400.0), 60.0)
 	_check(chain.size() == 4 and neighbour != null, "the bleach fixture did not build")
 	if chain.size() != 4 or neighbour == null:
 		return
@@ -381,13 +388,14 @@ func _test_seated_on_floor() -> void:
 	if seabed == null:
 		return
 
-	# Kelp Court can live almost anywhere on the floor, so it is the faction that can
-	# actually be asked this across the whole map.
 	var anywhere := _faction(tank, "Kelp Court")
 	if anywhere == null:
 		return
 	# A tap high in the water column still founds the reef on the ground beneath it.
-	for x: float in [200.0, 680.0, 1440.0, 1847.0, 2754.0, 3000.0]:
+	# Positions are asked for rather than asserted: the basins refuse a shelf faction
+	# now, so three of the six spots a hard-coded list used to name are illegal for it.
+	for near: float in [200.0, 680.0, 1440.0, 1847.0, 2754.0, 3000.0]:
+		var x := _ground_x(tank, anywhere, near)
 		var colony := tank.plant_colony(anywhere, Vector2(x, 300.0))
 		if colony == null:
 			_failures.append("no colony could be founded at x=%.0f" % x)
@@ -620,8 +628,15 @@ func _test_ravine_gating() -> void:
 	var vent := _faction(tank, "Vent")
 	if vent == null:
 		return
-	_check(vent.requires_ravine > 0.0, "the Vent faction does not require a ravine")
+	_check(vent.likes_ravines, "the Vent faction does not belong in a basin")
 	var seabed := tank.seabed()
+
+	# The gate runs both ways: a shelf faction must be refused a basin.
+	var shelf_gate := _faction(tank, "Coral")
+	if shelf_gate != null:
+		_check(not tank.can_found(shelf_gate, 1847.0),
+			"a shelf faction was allowed into a basin")
+		_check(not shelf_gate.likes_ravines, "Coral claims to belong in a basin")
 
 	# The map's deepest non-carved ground must be refused even though it is deep.
 	var deepest_flat := -1.0
@@ -653,6 +668,101 @@ func _test_ravine_gating() -> void:
 	if shelf != null:
 		_check(vent.reach_up > shelf.reach_up,
 			"the vent's column is not the tallest in the game")
+
+	tank.clear_colonies()
+	tank.queue_free()
+
+# ---------------------------------------------------------------- the descent
+
+## A faction that is being beaten reaches DOWN, and what it founds is a different
+## faction on ground it could not otherwise have.
+##
+## Descent is driven by losing rather than by a timer, which is what makes the player's
+## attacks cause it: squeeze a shelf faction hard enough and its answer is to colonise
+## the basins you were keeping empty.
+func _test_descent() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var shelf := _faction(tank, "Coral")
+	var deep := _faction(tank, "Vent")
+	if shelf == null or deep == null:
+		return
+	_check(shelf.descends_to == deep, "Coral does not descend into the Vent")
+
+	# Sitting right above a basin, so there IS deeper ground to reach.
+	var basin := 1847.0
+	var above := _ground_x(tank, shelf, basin - 500.0)
+	var parent := tank.plant_colony(shelf, Vector2(above, 400.0), shelf.capacity)
+	if parent == null:
+		_failures.append("the descent fixture did not build")
+		return
+
+	# Comfortable: it must NOT descend. A faction holding its own has no reason to leave.
+	parent.pressure = 1.0
+	for i in int(shelf.descend_interval * 3.0 / STEP):
+		parent._tick_descent(STEP)
+	var after_comfort := tank.colonies().size()
+	_check(after_comfort == 1,
+		"a colony at full pressure descended anyway (%d colonies)" % after_comfort)
+
+	# Squeezed: now it reaches down.
+	var vents := 0
+	for i in int(shelf.descend_interval * 12.0 / STEP):
+		parent.pressure = 0.1
+		parent._tick_descent(STEP)
+	for colony in tank.colonies():
+		if colony.faction == deep:
+			vents += 1
+	_check(vents >= 1, "a colony squeezed for two minutes never descended")
+
+	# And what it founded is on ground the parent's own faction is barred from.
+	for colony in tank.colonies():
+		if colony.faction != deep:
+			continue
+		_check(tank.can_found(deep, colony.global_position.x),
+			"a descended colony sits on ground its own faction cannot hold")
+		_check(not tank.can_found(shelf, colony.global_position.x),
+			"the descent reached ground the parent could simply have been placed on")
+	print("  descent: a squeezed shelf colony founded %d vent(s)" % vents)
+
+	tank.clear_colonies()
+	tank.queue_free()
+
+## Ground you have to earn stays earned: an unplaceable faction is not offered, and a
+## basin is defended by whoever belongs in it.
+func _test_earned_ground() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	var deep := _faction(tank, "Vent")
+	var shelf := _faction(tank, "Coral")
+	if deep == null or shelf == null:
+		return
+
+	_check(not deep.placeable, "the Vent is still offered as something to place")
+	for faction in tank.placeable_factions():
+		_check(faction.placeable, "placeable_factions() returned an unplaceable faction")
+	_check(not tank.placeable_factions().has(deep),
+		"the Vent appears among the factions the player may place")
+
+	# A shelf faction standing beside a basin must not out-claim a vent inside it.
+	# Founding gates alone did not do this: the shelf colony was barred from the basin
+	# and still projected across it at full strength, so a descended beachhead arrived
+	# under a rival's full weight and never established.
+	var basin := 1847.0
+	var outside := _ground_x(tank, shelf, basin - 460.0)
+	tank.plant_colony(shelf, Vector2(outside, 400.0), shelf.capacity)
+	var vent := tank.plant_colony(deep, Vector2(basin, 400.0), 40.0)
+	if vent == null:
+		_failures.append("could not found a vent in the basin")
+		return
+	tank._rebuild_territory()
+
+	var holder := tank.territory().owner_at(
+		Vector2(basin, tank.seabed().height_at(basin) - Territory.CELL))
+	_check(holder != null and holder.faction == deep,
+		"a mature shelf colony next door holds the floor of a basin it cannot live in")
 
 	tank.clear_colonies()
 	tank.queue_free()

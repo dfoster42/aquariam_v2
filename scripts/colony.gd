@@ -16,6 +16,9 @@ signal released(colony: Colony, position: Vector2)
 ## Asks the tank to found a daughter colony at `position`. The tank decides — it is the
 ## only thing that knows whether that ground is already owned.
 signal spreading(colony: Colony, position: Vector2)
+## Asks the tank for deeper ground to put a successor faction on. Same division of
+## labour: the colony knows it is losing, only the tank knows what ground exists.
+signal descending(colony: Colony, successor: Faction)
 signal died(colony: Colony)
 
 ## Below this a colony is rubble and is cleared. Not zero: a colony asymptotically
@@ -74,6 +77,7 @@ var supported: bool = true
 
 var _fish_debt: float = 0.0
 var _spread_timer: float = 0.0
+var _descend_timer: float = 0.0
 ## Biomass a disaster has taken but that has not yet drained away. Damage is a WOUND,
 ## not a subtraction — see `damage()`.
 var _draining: float = 0.0
@@ -154,6 +158,7 @@ func tick(delta: float) -> void:
 		return
 
 	_tick_spread(delta)
+	_tick_descent(delta)
 
 	if faction.species == null or faction.biomass_per_fish <= 0.0:
 		return
@@ -190,6 +195,36 @@ func _tick_spread(delta: float) -> void:
 	# every one of them stunted by its own siblings.
 	var step := extent().x * (Territory.REACH + 0.6) * (1.0 if randf() < 0.5 else -1.0)
 	spreading.emit(self, global_position + Vector2(step, 0.0))
+
+## Looks for deeper ground once this colony is being beaten where it is.
+##
+## Gated on pressure rather than on biomass alone: a colony holding its ground has no
+## reason to go anywhere, and tying the descent to being squeezed means the player's
+## attacks cause it. Strike a shelf faction hard enough and its answer is to reach down
+## into the ravines.
+func _tick_descent(delta: float) -> void:
+	if faction.descends_to == null or faction.descend_interval <= 0.0:
+		return
+	_descend_timer += delta
+	if _descend_timer < faction.descend_interval:
+		return
+	_descend_timer = 0.0
+	if pressure > faction.descend_at:
+		return
+	# It has to be able to afford the journey. A colony already at the floor of its own
+	# collapse cannot also found a colony somewhere else.
+	if biomass - faction.descend_cost < MIN_BIOMASS:
+		return
+	descending.emit(self, faction.descends_to)
+
+## Pays for a descent. Returns what the deeper colony should start with, or 0.
+func pay_to_descend() -> float:
+	var cost := faction.descend_cost
+	if _dead or cost <= 0.0 or biomass - cost < MIN_BIOMASS:
+		return 0.0
+	biomass -= cost
+	_apply_size()
+	return cost
 
 ## The colony's base scale, in world units. Area scales with biomass, so doubling the
 ## biomass widens it by about 40% rather than doubling it — a colony that grew tenfold
@@ -239,7 +274,7 @@ static func influence_for(dx: float, dy: float, mass: float, ex: float, ey: floa
 		width = ex * lerpf(1.0, 0.42, t * t)
 		# Full strength from the floor to the column's cap, then a soft lid — a
 		# deliberate flat top rather than the accidental one a clipped circle produced.
-		vertical = 1.0 - smoothstep(0.82, 1.0, t)
+		vertical = 1.0 - smoothstep(0.52, 1.0, t)
 	else:
 		# A pelagic band: strength across its thickness, nothing outside it. The vertical
 		# fade runs over most of the half-thickness rather than its outer sliver, because
@@ -253,11 +288,14 @@ static func influence_for(dx: float, dy: float, mass: float, ex: float, ey: floa
 	var sx := dx / maxf(width, 1.0)
 	var falloff := mass / (1.0 + sx * sx)
 	# Tapered to nothing at the edge of the searched box, or the box IS the claim's
-	# shape. Territory only visits cells within REACH extents, and an inverse square has
+	# shape. The fade STARTS early — at about a third of the way out — because where it
+	# begins is free while how far the box reaches is not: REACH was cut from 2.4 to 1.7
+	# for the rebuild's sake, which narrowed the fade band with it and put the hard-edged
+	# rectangles back. Moving the start recovers the soft edge at no cost. Territory only visits cells within REACH extents, and an inverse square has
 	# not decayed anywhere near the claim threshold by then: measured at biomass 130 the
 	# influence at the box edge was still 19 against a threshold of 3, so every mature
 	# territory was a hard-edged rectangle the size of its search box.
-	return falloff * vertical * smoothstep(1.0, 0.68, absf(sx) / Territory.REACH)
+	return falloff * vertical * smoothstep(1.0, 0.35, absf(sx) / Territory.REACH)
 
 ## The region, relative to this colony, in which its influence can be non-zero.
 ##

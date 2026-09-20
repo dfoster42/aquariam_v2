@@ -505,6 +505,62 @@ The ranges are wide on purpose: where you are seeded matters, and three basins i
 number to share. What matters is that the means are within 2.6 points and nothing is
 eliminated.
 
+### Working downward: ground that has to be earned
+
+The upward half of the vertical axis was always there — a benthic faction grows a taller
+column. This is the other half: a faction that is **losing** reaches down, and what it
+founds on the way down is a different faction on ground it could not otherwise have.
+
+**The trigger is being beaten, not a timer.** A colony whose `pressure` falls below
+`descend_at` starts looking for deeper ground; one holding its own has no reason to leave.
+That makes the player's attacks the cause of the descent — squeeze a shelf faction hard
+enough and its answer is to colonise the basins you were keeping empty. The parent pays
+`descend_cost` and survives: a lineage reaches down, it does not migrate.
+
+**The ravines are no longer a picker tile.** `Faction.placeable` is false for the vent, so
+the most restricted real estate on the map stopped being the cheapest thing to acquire.
+`tools/balance.gd` seeds only placeable factions, which is what the player can actually
+start from; whether a vent exists at all in a run is an outcome, not a setup.
+
+Four things were wrong on the way:
+
+**Raising the cost of descending made it rarer, not stronger.** The obvious fix for a
+beachhead that cannot establish is to send more with it — but the colonies that qualify are
+by definition the ones doing badly, and at a cost of 30 the descent fired in two runs of
+ten instead of nine. The beachhead's problem was never its size.
+
+**Substrate gated founding but not holding.** A shelf faction rooted beside a basin was
+barred from it and still projected across it at full strength, so a descended colony
+arrived under a rival's full weight and never established — vents reached nine runs in ten
+and held 2.6% of the sea between them. A benthic claim is now weighted by the kind of
+ground under each column, not only by where its colony stands.
+
+**Depth is not the same thing as a basin, and keying on depth handed two of the three
+away.** The basin at x=1847 sits at 0.71 of map height while the *uncarved* floor at x=0
+is at 0.87. The gate and the weighting both key on carving.
+
+**The gate had to run both ways.** Barring a vent from the open floor while letting a shelf
+faction into a basin means the deep is not earned, it is merely inconvenient. One threshold
+and one flag — `likes_ravines` — so the two can never disagree about where the boundary is.
+
+Ten runs of six simulated minutes, seeding only what a player can place:
+
+| faction | mean share | colonies | wiped out |
+| --- | ---: | ---: | ---: |
+| Coral | 19.2% | 2.0 | 0/10 |
+| Kelp Court | 15.1% | 6.1 | 0/10 |
+| Vent | 9.0% | 6.7 | 0/10 |
+| Deep Blue | 17.4% | 11.4 | 0/10 |
+
+The vent is the smallest because it holds three short stretches of seabed, and it is never
+wiped out because a lineage reaches one in every run. It is nobody's starting position and
+it is always somebody's ending one.
+
+One regression worth recording: cutting `REACH` from 2.4 to 1.7 for the rebuild's sake
+narrowed the band the lateral taper fades across, and the hard-edged rectangles came back.
+Where a fade BEGINS is free while how far the box reaches is not, so the taper now starts
+about a third of the way out instead of two thirds.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:

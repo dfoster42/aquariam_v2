@@ -54,18 +54,29 @@ enum Claim {
 ## height — so (0.0, 1.0) is anywhere and (0.0, 0.82) is the shelf but not the deeps.
 @export var floor_depth_range: Vector2 = Vector2(0.0, 1.0)
 
-## BENTHIC: world units of ravine carving the ground must have for this faction to take
-## it. Above 0, the faction can only be founded inside a basin.
+## BENTHIC: whether this faction belongs in a basin or out on the open floor.
 ##
-## This is what makes the terrain the board rather than the wallpaper: the three ravines
-## already drawn into the backdrop become the only ground a vent faction can hold — a few
-## hundred units of a 3240-unit seabed — and because they are the deepest ground on the
-## map, a column rising out of one reaches higher than anything else in the game.
+## A two-way gate, and the thing that makes the terrain the board rather than the
+## wallpaper. The three basins already drawn into the backdrop become the only ground a
+## vent faction can take, and ground no shelf faction can take — so a lineage that works
+## its way down into one has somewhere that is genuinely its own.
 ##
-## Checked against carving rather than against depth, because depth cannot tell a basin
-## from the landform's own low ground: the floor at x=0 is deeper than two of the three
-## ravines and is not a ravine at all.
-@export_range(0.0, 200.0, 5.0) var requires_ravine: float = 0.0
+## It weights the CLAIM as well as gating the founding. Gating founding alone left a
+## shelf colony beside a basin projecting across it at full strength, and a descended
+## beachhead arrived under a rival's full weight and never established.
+##
+## Weights the claim, not just where it may be founded. Substrate used to gate founding
+## only, so a shelf faction rooted beside a basin still projected at full strength across
+## it — ground it is forbidden to occupy — and a lineage that had worked its way down
+## into that basin arrived as a beachhead under a rival's full weight and never
+## established.
+##
+## Keyed on CARVING rather than on depth, because the two are not the same thing here:
+## the basin at x=1847 sits at 0.71 of map height while the uncarved floor at x=0 is at
+## 0.87. A depth rule hands a shelf faction two of the three basins.
+@export var likes_ravines: bool = false
+
+
 
 ## PELAGIC: the depth its band sits at, as a fraction of map height.
 @export_range(0.0, 1.0, 0.01) var altitude: float = 0.24
@@ -82,6 +93,32 @@ enum Claim {
 ## the player notices, and a pelagic faction whose supporting reef is struck should visibly
 ## thin rather than blink out.
 @export_range(0.0, 20.0, 0.1) var decay_unsupported: float = 2.2
+
+@export_group("Descent")
+## Whether the player may found this faction directly.
+##
+## False for anything meant to be EARNED. The deepest ground on the map — the three
+## ravines — was a picker tile like any other, which made the most restricted real estate
+## in the game the cheapest thing to acquire. A faction that can only be reached by a
+## lineage working its way down to it is a destination; one you can tap onto is scenery.
+@export var placeable: bool = true
+
+## What this faction becomes when it goes deeper. Null means it is the end of its line.
+@export var descends_to: Faction
+
+## Pressure below which a colony starts looking for deeper ground.
+##
+## Descent is driven by LOSING. A faction holding its own has no reason to leave, and
+## making the player's attacks the cause of the descent is worth more than a timer: you
+## strike a shelf faction and it answers by colonising the deep you were keeping empty.
+@export_range(0.0, 1.0, 0.05) var descend_at: float = 0.3
+
+## Seconds between attempts, once a colony is losing.
+@export_range(0.0, 300.0, 1.0) var descend_interval: float = 18.0
+
+## Biomass the parent spends founding the deeper colony, which starts with it. The parent
+## survives — a lineage reaches down, it does not migrate.
+@export_range(1.0, 200.0, 1.0) var descend_cost: float = 22.0
 
 @export_group("Growth")
 ## Biomass a colony of this faction tends toward when nothing is pressing on it.

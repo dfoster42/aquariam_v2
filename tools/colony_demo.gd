@@ -93,6 +93,9 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _setup() -> void:
+	# No vent among them: it is not placeable, and a lineage has to descend into a basin
+	# to reach one. Whether any does is part of what this run shows.
+	#
 	# TWO of each benthic faction, so a share readout compares factions rather than
 	# counting seeds. An earlier version planted two Corals and one Kelp and the
 	# resulting 15% against 6% read as an imbalance that was not there.
@@ -108,7 +111,6 @@ func _setup() -> void:
 	for spec: Array in [
 		["Coral", bounds.size.x * 0.10],
 		["Kelp Court", bounds.size.x * 0.30],
-		["Vent", bounds.size.x * 0.57],
 		["Coral", bounds.size.x * 0.72],
 		["Kelp Court", bounds.size.x * 0.90],
 	]:

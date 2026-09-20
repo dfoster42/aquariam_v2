@@ -42,12 +42,17 @@ func _process(_delta: float) -> bool:
 		if tank == null:
 			quit(1)
 			return true
+		# Every faction is REPORTED, but only placeable ones are seeded. The ravine
+		# dwellers have to be reached by a lineage descending into them, so seeding one
+		# would measure a start the player cannot have.
 		for faction in tank.available_factions:
 			if not samples.has(faction.display_name):
 				samples[faction.display_name] = [] as Array[float]
 				colony_counts[faction.display_name] = [] as Array[float]
 				wipeouts[faction.display_name] = 0
 				names.append(faction.display_name)
+			if not faction.placeable:
+				continue
 			for s in SEEDS_PER_FACTION:
 				tank.plant_colony(faction, Vector2(_legal_x(tank, faction), 400.0), 30.0)
 

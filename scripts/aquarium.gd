@@ -50,6 +50,11 @@ const TERRITORY_INTERVAL: float = 0.25
 const STRIKE_RADIUS: float = 360.0
 ## How many points across a pelagic colony's width are tested for benthic support.
 const SUPPORT_SAMPLES: int = 5
+## How much deeper the ground has to be before it counts as a descent, in world units.
+## Without a floor on it, a colony "descends" onto the gentle dip next door forever.
+const DESCENT_DROP: float = 90.0
+## How far along the seabed a colony will look for deeper ground.
+const DESCENT_SEARCH: float = 1400.0
 ## Seconds a bleach takes to carry from one colony to the next.
 ##
 ## The BFS knew the hop distance and threw it away, applying every colony's damage in the
@@ -346,6 +351,7 @@ func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1
 			_bounds.position.y + _bounds.size.y * faction.altitude)
 	colony.released.connect(_on_colony_released)
 	colony.spreading.connect(_on_colony_spreading)
+	colony.descending.connect(_on_colony_descending)
 	colony.died.connect(_on_colony_died)
 	colony_layer.add_child(colony)
 	_colonies.append(colony)
@@ -366,7 +372,11 @@ func can_found(faction: Faction, x: float) -> bool:
 		return true
 	if _bounds.size.y <= 0.0:
 		return true
-	if faction.requires_ravine > 0.0 and _seabed.ravine_at(x) < faction.requires_ravine:
+	# The basins belong to whoever belongs in them, both ways round: a vent faction is
+	# refused the open floor and a shelf faction is refused a basin. One threshold and
+	# one flag, so the two can never disagree about where the boundary is.
+	var in_basin := _seabed.ravine_at(x) >= Territory.BASIN_CARVING
+	if in_basin != faction.likes_ravines:
 		return false
 	var depth := (_seabed.height_at(x) - _bounds.position.y) / _bounds.size.y
 	return depth >= faction.floor_depth_range.x and depth <= faction.floor_depth_range.y
@@ -494,6 +504,53 @@ func _on_colony_spreading(parent: Colony, position: Vector2) -> void:
 		return
 	plant_colony(parent.faction, position, stake)
 
+## A colony is losing and wants to found its successor on deeper ground.
+##
+## The tank decides where, because only it knows the terrain and who holds what. The
+## nearest legal ground wins rather than the deepest: a lineage should read as working
+## its way DOWN the slope in steps, not teleporting to the bottom of the map the first
+## time it is squeezed.
+func _on_colony_descending(parent: Colony, successor: Faction) -> void:
+	if successor == null or _colonies.size() >= MAX_COLONIES or _seabed == null:
+		return
+	var target := _deeper_ground(parent, successor)
+	if target < 0.0:
+		return
+	var stake := parent.pay_to_descend()
+	if stake <= 0.0:
+		return
+	var colony := plant_colony(successor, Vector2(target, 0.0), stake)
+	if colony != null:
+		# Marked, because a faction appearing out of nowhere on the far side of the map
+		# is otherwise the one thing in the simulation that happens with no visible cause.
+		_mark_disaster(colony.global_position, colony.extent().x * 0.7, successor.color)
+		colony_founded.emit(successor)
+
+## The nearest x that `successor` may be founded on and that is meaningfully deeper than
+## `parent` stands. Negative when there is nowhere to go.
+func _deeper_ground(parent: Colony, successor: Faction) -> float:
+	var from := parent.global_position.x
+	var floor_here := _seabed.height_at(from)
+	var step := 20.0
+	var steps := int(DESCENT_SEARCH / step)
+	for i in range(1, steps + 1):
+		for dir: float in [1.0, -1.0]:
+			var x := from + dir * float(i) * step
+			if x < _bounds.position.x + Colony.BASE_RADIUS \
+					or x > _bounds.end.x - Colony.BASE_RADIUS:
+				continue
+			if _seabed.height_at(x) < floor_here + DESCENT_DROP:
+				continue
+			if not can_found(successor, x):
+				continue
+			# Never onto ground a rival already holds. A lineage has to reach past a
+			# neighbour or through it, never simply land behind it.
+			var holder := _territory.owner_at(Vector2(x, _seabed.height_at(x) - _territory.cell_size()))
+			if holder != null and holder.faction != successor and holder.faction != parent.faction:
+				continue
+			return x
+	return -1.0
+
 func _on_colony_died(colony: Colony) -> void:
 	var faction := colony.faction
 	if _detach_colony(colony):
@@ -528,6 +585,11 @@ func clear_colonies() -> void:
 		colony.queue_free()
 	_colonies.clear()
 	_rebuild_territory()
+
+## The factions the player may found directly. Anything meant to be earned — the ravine
+## dwellers — is reachable only by a lineage descending into it.
+func placeable_factions() -> Array[Faction]:
+	return available_factions.filter(func(f: Faction) -> bool: return f.placeable)
 
 func select_faction(faction: Faction) -> void:
 	selected_faction = faction

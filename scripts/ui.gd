@@ -323,9 +323,10 @@ func _build_picker() -> void:
 			_refresh_hint())
 		picker.add_child(tile)
 
-	if not _aquarium.available_factions.is_empty():
+	var offered := _aquarium.placeable_factions()
+	if not offered.is_empty():
 		picker.add_child(_divider())
-	for faction in _aquarium.available_factions:
+	for faction in offered:
 		var tile := _tile(faction.display_name, ICON_COLONY)
 		# The tile carries the faction's own colour so the strip reads as the map does:
 		# picking the green one and watching green spread is the whole feedback loop.
