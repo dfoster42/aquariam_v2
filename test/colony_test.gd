@@ -343,12 +343,21 @@ func _test_bleach() -> void:
 	_check(isolated != null, "the isolated colony was not planted")
 	if isolated == null:
 		return
-	var survivors_before := tank.colonies().size()
+	# Everything still standing and unwounded right before the second bleach. Compared
+	# against this rather than against a colony COUNT: the chain's remnants are still
+	# draining from the first bleach and die during the advance, so a count would report
+	# their deaths as collateral from a disaster on the other side of the map.
+	var healthy: Array[Colony] = []
+	for colony in tank.colonies():
+		if colony != isolated and not colony.is_dying():
+			healthy.append(colony)
+
 	tank.bleach(isolated.global_position)
 	_advance(tank, Colony.DRAIN_DURATION + 0.5)
 	_check(isolated.is_dead(), "a bleach on an isolated colony left it standing")
-	_check(tank.colonies().size() == survivors_before - 1,
-		"a bleach on an isolated colony took something else with it")
+	for colony in healthy:
+		_check(is_instance_valid(colony) and not colony.is_dead(),
+			"a bleach on an isolated colony killed a healthy colony elsewhere")
 
 	print("  bleach: %.0f biomass, %d of 4 links killed; the rival next door untouched"
 		% [destroyed, killed])

@@ -93,8 +93,12 @@ func _process(_delta: float) -> bool:
 	return false
 
 func _setup() -> void:
-	# One of everything, on ground each faction is actually allowed to hold. Spaced so
-	# none starts touching another: the borders have to form during the run, or the first
+	# TWO of each benthic faction, so a share readout compares factions rather than
+	# counting seeds. An earlier version planted two Corals and one Kelp and the
+	# resulting 15% against 6% read as an imbalance that was not there.
+	#
+	# On ground each faction is actually allowed to hold, and spaced so none starts
+	# touching another: the borders have to form during the run, or the first
 	# shot already shows the answer.
 	#
 	# Positions are asked for rather than asserted — a vent can only be founded in one of
@@ -102,10 +106,11 @@ func _setup() -> void:
 	# so hard-coded x values would quietly produce a demo of two reefs and a gap.
 	var bounds := _tank.bounds()
 	for spec: Array in [
-		["Coral", bounds.size.x * 0.20],
-		["Kelp Court", bounds.size.x * 0.46],
+		["Coral", bounds.size.x * 0.10],
+		["Kelp Court", bounds.size.x * 0.30],
 		["Vent", bounds.size.x * 0.57],
-		["Coral", bounds.size.x * 0.88],
+		["Coral", bounds.size.x * 0.72],
+		["Kelp Court", bounds.size.x * 0.90],
 	]:
 		var faction := _faction(String(spec[0]))
 		if faction == null:
@@ -176,6 +181,24 @@ func _report(label: String) -> void:
 		parts.append("%d shoals adrift" % adrift)
 	print("%s: %s, open water %.1f%%"
 		% [label, ", ".join(parts), territory.open_water() * 100.0])
+	# Per-faction detail, because a share alone cannot say WHY a faction is losing:
+	# stalled growth (low pressure) and being out-competed for ground look identical
+	# in a percentage.
+	for faction in _tank.available_factions:
+		var n := 0
+		var mass := 0.0
+		var press := 0.0
+		for colony in _tank.colonies():
+			if colony.faction != faction:
+				continue
+			n += 1
+			mass += colony.biomass
+			press += colony.pressure
+		if n == 0:
+			print("    %-11s wiped out" % faction.display_name)
+			continue
+		print("    %-11s %d colonies, mean biomass %.0f/%.0f, mean pressure %.2f"
+			% [faction.display_name, n, mass / n, faction.capacity, press / n])
 
 func _shoot(name: String) -> void:
 	var path := "%s/%s.png" % [_out_dir.trim_suffix("/"), name]

@@ -305,7 +305,8 @@ func _benthic_under(colony: Colony) -> bool:
 		if x < _bounds.position.x or x > _bounds.end.x:
 			continue
 		# Just above the ground, where a benthic column is always at full strength.
-		var holder := _territory.owner_at(Vector2(x, _seabed.height_at(x) - Territory.CELL))
+		var holder := _territory.owner_at(
+			Vector2(x, _seabed.height_at(x) - _territory.cell_size()))
 		if holder != null and holder.is_benthic():
 			return true
 	return false

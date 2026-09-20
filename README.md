@@ -427,6 +427,84 @@ stair-stepping was plainly visible at the zoom a player actually holds, and the 
 crust showed it worst because it traces a slope. **The rebuild cost under a full colony
 load has not been measured at the finer size**, only that the test suite still passes.
 
+### What a territory rebuild costs
+
+`tools/territory_benchmark.gd`. The cell size was cut from 36 world units to 24 on how it
+looked, with nobody knowing what it cost. It cost a great deal.
+
+| | ns per cell visited | 40 colonies at CELL 24 |
+| --- | ---: | ---: |
+| as written | ~920 | ~212 ms (projected) |
+| search box bounded to the real claim | ~920 | 136.7 ms |
+| `REACH` 2.4 -> 1.7 | ~920 | 115.9 ms |
+| packed arrays and a static kernel | **288** | **35.7 ms** |
+
+35.7 ms four times a second is 14.3% of the machine at the worst case the cap allows —
+forty colonies, every one of them mature. It is 6x cheaper than the same grid written the
+obvious way, and still cheaper than the *coarser* grid was before any of this.
+
+Three findings, and only one of them is about the cell size:
+
+**The search box was 2.4x too tall.** Territory bounded its search at `extent * REACH` on
+both axes. That is right laterally, where the inverse-square tail lives, and wrong
+vertically, because a claim is hard zero above its lid and below the floor. A vent with a
+1900-unit column had 4560 units of water scanned for it — the whole height of the map —
+almost all of it cells it could never claim. Colonies now state their own non-zero region
+through `reach_box()` rather than having Territory guess it.
+
+**The cost was per-cell overhead, not cell count.** At ~920 ns for every cell looked at
+against maybe a tenth of that in actual arithmetic, the rest was interpreter: an instance
+method call, two `Vector2` constructions, and two `Dictionary` operations on every cell.
+Ownership moved to `PackedInt32Array`/`PackedFloat32Array` indexed by cell, the per-colony
+counters became locals, and the kernel became a static function taking plain floats.
+288 ns/cell.
+
+**Anisotropy really did make it cheaper**, as claimed earlier — but the claim was made
+about a rebuild that was three times more expensive than it needed to be, which is not
+much of a defence.
+
+### Balance is measured, not eyeballed
+
+`tools/balance.gd` runs many randomised starts and reports each faction's mean share, its
+range, and how often it is wiped out.
+
+It exists because balance was being read off `tools/colony_demo.gd`, which plants the same
+factions at the same positions every run — so it measures the layout, not the factions. On
+that fixed layout Kelp held 30% and Coral 4%, and two rounds of tuning went into "fixing"
+a Coral that was not broken: it had been seeded between two rivals, and its other colony
+sat at the map edge where it could only spread one way. Randomised, the same build reads
+Coral 15.7% and Kelp 11.9%, and the actual outlier was the Vent at 32.4%.
+
+Two real defects did come out of it:
+
+**A faction was punished for succeeding.** Daughters were founded 1.2 extents from their
+parent, well inside its 1.7-extent claim, so siblings spent their lives taking cells off
+each other. Every cell a daughter took was one the parent had "lost", pressure collapsed
+for both, and since spreading itself requires pressure above a half, whichever faction
+spread first drove everyone's pressure down and locked the rest out permanently. The map
+settled into stunted colonies at a quarter of their capacity. Daughters now clear the
+parent's claim.
+
+**Making pressure faction-wide is a runaway, and was tried.** Counting every cell a faction
+holds anywhere as friendly means the more ground it has the faster it grows and spreads:
+one faction pinned at pressure 1.00, reached thirty-six colonies and 55% of the sea while
+every rival sat at 0.00 and died. Pressure stays per colony; the self-punishment is fixed
+where it is caused.
+
+After that, and dropping the vent's column from 1900 to 1400 — it still tops out highest
+in the game, because it starts from the deepest ground — 20 runs of 7 simulated minutes:
+
+| faction | mean share | range | wiped out |
+| --- | ---: | :---: | ---: |
+| Coral | 17.6% | 0.4-41.7% | 0/20 |
+| Kelp Court | 17.0% | 0.1-36.0% | 0/20 |
+| Vent | 15.0% | 0.0-37.5% | 0/20 |
+| Deep Blue | 15.1% | 8.5-18.9% | 0/20 |
+
+The ranges are wide on purpose: where you are seeded matters, and three basins is a small
+number to share. What matters is that the means are within 2.6 points and nothing is
+eliminated.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:

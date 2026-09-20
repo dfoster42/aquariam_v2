@@ -179,12 +179,16 @@ func _tick_spread(delta: float) -> void:
 	_spread_timer = 0.0
 	if biomass < faction.capacity * faction.spread_at or pressure < 0.5:
 		return
-	# Sideways only, and just beyond its own edge: close enough that the daughter's
-	# territory joins the parent's rather than stranding an island, far enough that it is
-	# new ground. Benthic factions walk the seabed and pelagic ones run along their band,
-	# so neither has anywhere to go but left or right — the vertical axis is earned by
-	# growing, not by budding.
-	var step := extent().x * 1.2 * (1.0 if randf() < 0.5 else -1.0)
+	# Sideways only, and clear of its own claim. Benthic factions walk the seabed and
+	# pelagic ones run along their band, so neither has anywhere to go but left or right
+	# — the vertical axis is earned by growing, not by budding.
+	#
+	# The gap must exceed Territory.REACH, or a daughter is founded inside the parent's
+	# own claim and the two spend the rest of their lives taking cells off each other.
+	# At 1.2 extents they overlapped almost completely: measured, a faction that spread
+	# well ended up with eleven colonies averaging 29 biomass against a capacity of 120,
+	# every one of them stunted by its own siblings.
+	var step := extent().x * (Territory.REACH + 0.6) * (1.0 if randf() < 0.5 else -1.0)
 	spreading.emit(self, global_position + Vector2(step, 0.0))
 
 ## The colony's base scale, in world units. Area scales with biomass, so doubling the
@@ -206,49 +210,71 @@ func radius() -> float:
 ## big reef pushes its border into a small neighbour's ground.
 func influence_at(offset: Vector2) -> float:
 	var reach := extent()
-	if is_benthic():
+	return influence_for(offset.x, offset.y, biomass, reach.x, reach.y, is_benthic())
+
+## The claim kernel, as plain floats.
+##
+## Static and argument-only so Territory's rebuild can call it without an instance lookup
+## and without building a Vector2 per cell. Measured before: the rebuild cost ~900 ns for
+## every cell it looked at, which is roughly ten times the arithmetic in it — the rest was
+## interpreter overhead, and a dynamic method call per cell was most of it.
+##
+## One definition. `influence_at` is the readable wrapper and delegates here, so the
+## formula cannot drift between the two callers.
+static func influence_for(dx: float, dy: float, mass: float, ex: float, ey: float,
+		benthic: bool) -> float:
+	var width := ex
+	var vertical := 1.0
+	if benthic:
 		# Height above the ground this colony is rooted to. Nothing below the floor is
 		# claimable — Territory's water mask enforces that too, but a claim that bled
-		# into the rock is exactly what read as a view from above, so it is checked in
-		# both places.
-		var height := -offset.y
+		# into the rock is exactly what read as a view from above.
+		var height := -dy
 		if height < -CRUST_DEPTH:
 			return 0.0
-		var t := clampf(height / maxf(reach.y, 1.0), 0.0, 1.0)
+		var t := clampf(height / maxf(ey, 1.0), 0.0, 1.0)
 		# The column NARROWS as it rises. Without this a benthic claim is a rectangle:
 		# full-width lateral falloff all the way up to a flat lid, which drew as a
 		# coloured block standing on the seabed. A reef is widest where it is attached.
-		var width := reach.x * lerpf(1.0, 0.42, t * t)
-		var lateral := _lateral(offset.x, width)
-		if lateral <= 0.0:
-			return 0.0
+		width = ex * lerpf(1.0, 0.42, t * t)
 		# Full strength from the floor to the column's cap, then a soft lid — a
 		# deliberate flat top rather than the accidental one a clipped circle produced.
-		return lateral * (1.0 - smoothstep(0.82, 1.0, t))
-
-	# A pelagic band: strength across its thickness, nothing outside it. The colony sits
-	# at the middle of its own band, so the offset is already measured from there. The
-	# vertical fade runs over most of the half-thickness rather than its outer sliver,
-	# because a band that fades over one cell draws as a painted bar.
-	var half := maxf(reach.y, 1.0)
-	var band := 1.0 - smoothstep(0.35, 1.0, absf(offset.y) / half)
-	if band <= 0.0:
+		vertical = 1.0 - smoothstep(0.82, 1.0, t)
+	else:
+		# A pelagic band: strength across its thickness, nothing outside it. The vertical
+		# fade runs over most of the half-thickness rather than its outer sliver, because
+		# a band that fades over one cell draws as a painted bar.
+		vertical = 1.0 - smoothstep(0.35, 1.0, absf(dy) / maxf(ey, 1.0))
+	if vertical <= 0.0:
 		return 0.0
-	return _lateral(offset.x, reach.x) * band
 
-## Lateral falloff about `width`, tapered to nothing at the edge of the searched box.
-##
-## Two colonies meet where their biomasses balance, so a big reef pushes its border into
-## a small neighbour's ground rather than splitting the difference.
-##
-## The taper is not cosmetic. Territory only visits cells within REACH extents, and an
-## inverse square has not decayed anywhere near the claim threshold by then: measured at
-## biomass 130, the influence at the box edge was still 19 against a threshold of 3, so
-## every mature colony's territory was a hard-edged rectangle the size of its search box.
-func _lateral(dx: float, width: float) -> float:
+	# Two colonies meet where their biomasses balance, so a big reef pushes its border
+	# into a small neighbour's ground rather than splitting the difference.
 	var sx := dx / maxf(width, 1.0)
-	var falloff := biomass / (1.0 + sx * sx)
-	return falloff * smoothstep(1.0, 0.68, absf(sx) / Territory.REACH)
+	var falloff := mass / (1.0 + sx * sx)
+	# Tapered to nothing at the edge of the searched box, or the box IS the claim's
+	# shape. Territory only visits cells within REACH extents, and an inverse square has
+	# not decayed anywhere near the claim threshold by then: measured at biomass 130 the
+	# influence at the box edge was still 19 against a threshold of 3, so every mature
+	# territory was a hard-edged rectangle the size of its search box.
+	return falloff * vertical * smoothstep(1.0, 0.68, absf(sx) / Territory.REACH)
+
+## The region, relative to this colony, in which its influence can be non-zero.
+##
+## Territory used to bound its search at `extent * REACH` on both axes, which is right
+## laterally — the inverse-square tail lives out there — and badly wrong vertically,
+## because a claim is HARD zero above its lid and below the floor. A vent with a
+## 1900-unit column was having 4560 units of water scanned for it, the whole height of
+## the map, almost all of it cells it could never claim. Measured before this: 40
+## colonies cost 93.5 ms a rebuild at a 36-unit cell, which at four passes a second is
+## 37% of the machine.
+func reach_box() -> Rect2:
+	var reach := extent()
+	var half_width := reach.x * Territory.REACH
+	if is_benthic():
+		# Up to the lid, and only a crust's depth below the anchor.
+		return Rect2(-half_width, -reach.y, half_width * 2.0, reach.y + CRUST_DEPTH)
+	return Rect2(-half_width, -reach.y, half_width * 2.0, reach.y * 2.0)
 
 ## How far this colony reaches on each axis, in world units.
 ##
