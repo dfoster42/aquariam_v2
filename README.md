@@ -193,7 +193,7 @@ accumulate.
 
 A `Faction` is a colour and a fish. A `Colony` is one faction's foothold: it holds
 `biomass`, grows logistically, claims ground, releases fish tinted to match, and can be
-destroyed. `Territory` computes who owns what as a 90x60 influence grid over the map and
+destroyed. `Territory` computes who owns what as a 135x90 influence grid over the map and
 paints it as one filtered texture — that layer is the entire reason the rest is legible.
 Without it a disaster kills an object; with it a disaster opens a hole that the
 neighbours visibly flow into.
@@ -269,8 +269,10 @@ and `floor_height` defaults to carved. There are real basins at x roughly 680, 1
 
 `Colony.influence_at()` took a scalar distance, which can only ever describe a circle.
 Territory had already computed the offset vector and threw the direction away on the next
-line. It now takes the whole offset and divides per axis by a `Faction.shape`, so a claim
-can be a crust hugging the floor or a plume rising off a vent. Measured, the old circular
+line. It now takes the whole offset and divides per axis by `Colony.extent()`, which the
+faction's own claim parameters shape — so a claim can be a crust hugging the floor or a
+plume rising off a vent. (An early version routed this through a `Faction.shape` vector;
+that was superseded by the claim kinds below and no such property exists.) Measured, the old circular
 claim was a 922-unit disc inside a 1384-unit water column — it was not merely reading as
 top-down, it was geometrically incapable of reading as anything else.
 
@@ -331,10 +333,13 @@ The roster that falls out:
 
 | faction | grip | column | ground it can take |
 | --- | ---: | ---: | --- |
-| Coral | 3.4 | 430 | the shelf, above 0.82 of map height |
-| Kelp Court | 1.4 | 1000 | almost any floor — a sliver of ground, most of the water |
-| Vent | 1.1 | 1900 | the three ravines only |
+| Coral | 1.9 | 820 | open floor, down to 0.78 of map height |
+| Kelp Court | 1.4 | 1000 | open floor, down to 0.86 — a sliver of ground, most of the water |
+| Vent | 0.7 | 1400 | the three basins only, and not placeable at all |
 | Deep Blue | — | band at 0.28 | the commons, while someone holds the floor below |
+
+Those numbers are the shipped ones and several of them moved during balancing; see
+"Balance is measured, not eyeballed" and "Working downward" below for what moved and why.
 
 **The ravines are the strategic feature, and they were already drawn.** A vent is gated on
 how deeply the ground is *carved*, not on how deep it is — depth cannot tell a basin from

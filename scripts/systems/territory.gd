@@ -9,7 +9,7 @@ extends RefCounted
 ## neighbours flow into, and the flowing-in is the part worth showing anyone.
 ##
 ## The grid is deliberately coarse and the texture is drawn with linear filtering, so
-## 90x60 cells come out as soft regions rather than as a chequerboard. Recomputed a few
+## 135x90 cells come out as soft regions rather than as a chequerboard. Recomputed a few
 ## times a second rather than per frame: territory moves at the speed colonies grow,
 ## which is nothing like 60 Hz.
 

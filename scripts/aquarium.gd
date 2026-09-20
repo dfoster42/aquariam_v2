@@ -317,7 +317,7 @@ func _benthic_under(colony: Colony) -> bool:
 	return false
 
 ## Stretches the coarse ownership grid over the whole map. Linear filtering on the
-## sprite is what turns 90x60 cells into soft regions instead of a chequerboard.
+## sprite is what turns 135x90 cells into soft regions instead of a chequerboard.
 func _fit_territory() -> void:
 	if _territory == null or territory_layer == null:
 		return
@@ -496,13 +496,24 @@ func _on_colony_spreading(parent: Colony, position: Vector2) -> void:
 	# under that offset is wherever the curve says, not wherever the parent happened to
 	# sit. Without this a chain of daughters walks off the terrain in a straight line.
 	position = Vector2(position.x, _seabed.height_at(position.x))
-	var holder := _territory.owner_at(position)
+	# Sampled a cell ABOVE the floor, not at it. The cell containing the floor is masked
+	# as rock and can never be owned, so asking who holds the exact floor height always
+	# answered "nobody" and the guard let daughters land on a rival's held ground.
+	var holder := _territory.owner_at(
+		Vector2(position.x, position.y - _territory.cell_size()))
 	if holder != null and holder.faction != parent.faction:
+		return
+	# Checked before charging. plant_colony refuses ground the faction cannot occupy —
+	# a basin, for a shelf faction — and the parent had already paid by then, so a
+	# colony budding toward a basin quietly burned biomass and got nothing for it.
+	if not can_found(parent.faction, position.x):
 		return
 	var stake := parent.pay_to_spread()
 	if stake <= 0.0:
 		return
-	plant_colony(parent.faction, position, stake)
+	if plant_colony(parent.faction, position, stake) == null:
+		# Nothing was founded, so nothing should have been spent.
+		parent.biomass += stake
 
 ## A colony is losing and wants to found its successor on deeper ground.
 ##
@@ -520,11 +531,13 @@ func _on_colony_descending(parent: Colony, successor: Faction) -> void:
 	if stake <= 0.0:
 		return
 	var colony := plant_colony(successor, Vector2(target, 0.0), stake)
-	if colony != null:
-		# Marked, because a faction appearing out of nowhere on the far side of the map
-		# is otherwise the one thing in the simulation that happens with no visible cause.
-		_mark_disaster(colony.global_position, colony.extent().x * 0.7, successor.color)
-		colony_founded.emit(successor)
+	if colony == null:
+		parent.biomass += stake
+		return
+	# Marked, because a faction appearing out of nowhere on the far side of the map is
+	# otherwise the one thing in the simulation that happens with no visible cause.
+	# `colony_founded` is not emitted here: plant_colony already owns that signal.
+	_mark_disaster(colony.global_position, colony.extent().x * 0.7, successor.color)
 
 ## The nearest x that `successor` may be founded on and that is meaningfully deeper than
 ## `parent` stands. Negative when there is nowhere to go.
@@ -688,7 +701,14 @@ func spawn(species: FishSpecies, position: Vector2, age: float = -1.0) -> Fish:
 	var fish: Fish = FISH_SCENE.instantiate()
 	var predators: Array[FishSpecies] = _predator_map.get(species, [] as Array[FishSpecies])
 	fish.configure(species, predators, _bounds, age, _seabed)
-	fish.global_position = _bounds.get_center() if not _bounds.has_point(position) else position
+	# Lifted out of the ground at birth, not merely on its first tick. configure() makes
+	# a fish's own movement terrain-aware, but the position written here is the raw
+	# request — so a tap on rock, a restored save, or a colony releasing at its own base
+	# put a fish inside the seabed until something moved it.
+	var at := _bounds.get_center() if not _bounds.has_point(position) else position
+	if _seabed != null:
+		at = _seabed.lift_out_of_rock(at, species.size * 0.5)
+	fish.global_position = at
 	fish.eaten.connect(_on_fish_eaten)
 
 	fish_layer.add_child(fish)
@@ -1166,7 +1186,16 @@ func _apply_time_away(seconds: float) -> void:
 		print("Away %d min: %d born, %d died of old age, %d fish now."
 			% [int(seconds / 60.0), born, died, _fish.size()])
 
+## A random point in open water. Used to seed a tank and to place the descendants an
+## absence produced.
+##
+## Seabed-aware, like the fish's own wander targets. It was not, so both paths put fish
+## inside the rock and relied on the first tick to lift them out — which meant a fish
+## saved before it had ever ticked came back somewhere else, and a save/restore round
+## trip could not be compared position for position.
 func _random_point() -> Vector2:
+	if _seabed != null:
+		return _seabed.random_water_point(24.0)
 	return Vector2(
 		randf_range(_bounds.position.x, _bounds.end.x),
 		randf_range(_bounds.position.y, _bounds.end.y))
