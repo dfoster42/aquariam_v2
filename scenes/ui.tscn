@@ -95,6 +95,14 @@ focus_mode = 0
 theme_type_variation = &"IconButton"
 unique_name_in_owner = true
 
+[node name="Standings" type="HFlowContainer" parent="Root/Safe/Stack"]
+visible = false
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/h_separation = 22
+theme_override_constants/v_separation = 4
+unique_name_in_owner = true
+
 [node name="Water" type="Control" parent="Root/Safe/Stack"]
 layout_mode = 2
 size_flags_vertical = 3

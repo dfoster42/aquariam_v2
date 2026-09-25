@@ -623,7 +623,8 @@ A headless functional check of spawning, movement, tank bounds and predation:
 godot --headless --script res://test/smoke_test.gd
 ```
 
-Ten files, all run by CI:
+Every `test/*_test.gd` file is run by CI, found by glob rather than listed — the list
+was hard-coded once, and two suites added later never ran there until it was noticed:
 
 | test | covers |
 | --- | --- |
@@ -637,6 +638,9 @@ Ten files, all run by CI:
 | `settings_test` | the mute survives a relaunch |
 | `edit_test` | undo, remove mode, and what must NOT be undoable |
 | `shelter_test` | prey hides in cover, and does not flee the cover it is already in |
+| `seabed_test` | the GDScript floor curve agrees with the Python that draws the backdrop |
+| `colony_test` | growth, contested borders, pressure, the vacuum after a strike, the travelling bleach, floor seating, the water denominator, columns and commons, basin gating, descent |
+| `playable_test` | a player can reach it: tiles for every placeable faction, a tap founds a colony, the standings appear, Bleach arms and lands |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each
 writing to the same save made the suite flaky — a run would fail three checks and then
