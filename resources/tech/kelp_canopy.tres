@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="FactionTrait" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="1_trait"]
+[ext_resource type="Resource" path="res://resources/tech/kelp_holdfast.tres" id="2_req"]
+
+[resource]
+script = ExtResource("1_trait")
+display_name = "Canopy"
+description = "columns climb toward the light"
+requires = ExtResource("2_req")
+condition = 0
+threshold = 0.18
+hold_for = 30.0
+reach_mul = 1.2

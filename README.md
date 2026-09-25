@@ -598,6 +598,40 @@ the real tanks directory (contents and timestamps) around a full sandboxed round
 `tools/screenshot.gd` is sandboxed like everything else, so it no longer photographs the
 player's real tank: it photographs whatever the sandbox holds, seeding it when empty.
 
+### Tech trees
+
+Every faction has a small tech tree, in `resources/tech/` and listed on the faction's
+`tech`. A trait is earned by something the simulation already measures and changes a stat
+the simulation already has, because an unlock the player cannot see is a number changing in
+a menu:
+
+| faction | traits |
+| --- | --- |
+| Coral | Branching (hold 8% for 20s: buds faster) · Calcified (live through a disaster: ignores a third of every one) · Barrier Reef, after Branching (keep 2 colonies: wider, heavier reefs) |
+| Kelp Court | Holdfast (hold 8%: grips more floor) · Regrowth (live through a disaster: grows faster) · Canopy, after Holdfast (hold 18%: columns 20% taller) · Gas Bladders, after Canopy (keep 4 colonies) |
+| Vent | Black Smoker (hold a basin for 30s: taller plume) · Chemosynthesis, after it (hold two basins: heavier and harder) |
+| Deep Blue | Schooling (keep 3 colonies: thicker band) · Drift (hold 12%: bleeds out slower over open ground) |
+
+Earned traits live on a `FactionProgress` per faction per tank — not on the `Faction`, which is
+shared by every tank — and colonies read every stat a trait can touch through it. They are
+saved with the tank. `SURVIVE_DISASTER` is the one condition that rewards being attacked
+rather than winning, and hardness is capped at 60% so a god's powers always do something.
+
+It shows in three places: a dot per trait on the standings, a line in the feed when one is
+earned (the feed also reports a lineage reaching into a basin and a faction dying out), and the
+Tech sheet behind the top-bar button, which lists every tree with what is earned, what is in
+progress and how far, and what is still locked behind something else.
+
+Two things were found on the way. The clocks ran slow: a territory pass fires once its
+accumulator *overshoots* the interval, and crediting the interval rather than the time that
+had passed made 32 seconds of play count as 26.5. And the trees rebalanced the map. Measured
+with `tools/balance.gd`, the first draft let Kelp snowball — Canopy and Gas Bladders stacking on
+a faction already ahead — while Coral's tree was mostly out of reach: it averages two colonies
+and Barrier Reef wanted three. After retuning the trees, not the factions, 16 runs of seven
+minutes give Coral 16.2%, Kelp 18.0%, Vent 12.5%, Deep Blue 16.1%, with every faction earning
+1.3 to 1.9 traits a run. Kelp can still run away in a single run (45% at worst) and Deep Blue
+was wiped out once in sixteen.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:
@@ -673,6 +707,7 @@ was hard-coded once, and two suites added later never ran there until it was not
 | `seabed_test` | the GDScript floor curve agrees with the Python that draws the backdrop |
 | `colony_test` | growth, contested borders, pressure, the vacuum after a strike, the travelling bleach, floor seating, the water denominator, columns and commons, basin gating, descent |
 | `sandbox_test` | tests and tools keep their files away from the player's saves; checks paths before touching storage |
+| `tech_test` | traits wait for their clocks, prerequisites gate the tree, effects show, surviving hardens, basins count, progress survives a save |
 | `playable_test` | a player can reach it: tiles for every placeable faction, a tap founds a colony, the standings appear, Bleach arms and lands |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each

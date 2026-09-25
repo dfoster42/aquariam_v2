@@ -34,6 +34,7 @@ func _process(_delta: float) -> bool:
 	var samples: Dictionary = {}
 	var colony_counts: Dictionary = {}
 	var wipeouts: Dictionary = {}
+	var traits: Dictionary = {}
 	var names: Array[String] = []
 
 	for run in _runs:
@@ -49,6 +50,7 @@ func _process(_delta: float) -> bool:
 			if not samples.has(faction.display_name):
 				samples[faction.display_name] = [] as Array[float]
 				colony_counts[faction.display_name] = [] as Array[float]
+				traits[faction.display_name] = [] as Array[float]
 				wipeouts[faction.display_name] = 0
 				names.append(faction.display_name)
 			if not faction.placeable:
@@ -69,18 +71,20 @@ func _process(_delta: float) -> bool:
 				if colony.faction == faction:
 					n += 1
 			(colony_counts[faction.display_name] as Array).append(float(n))
+			(traits[faction.display_name] as Array).append(
+				float(tank.progress_for(faction).unlocked.size()))
 			if n == 0:
 				wipeouts[faction.display_name] = int(wipeouts[faction.display_name]) + 1
 		tank.clear_colonies()
 		tank.queue_free()
 
 	print("%d runs, %d seeds each, %.0f simulated minutes\n" % [_runs, SEEDS_PER_FACTION, _minutes])
-	print("%-12s %8s %8s %8s %8s %9s" % ["faction", "mean", "min", "max", "colonies", "wiped"])
+	print("%-12s %8s %8s %8s %8s %9s %8s" % ["faction", "mean", "min", "max", "colonies", "wiped", "traits"])
 	for name in names:
 		var shares: Array = samples[name]
-		print("%-12s %7.1f%% %7.1f%% %7.1f%% %8.1f %6d/%d"
+		print("%-12s %7.1f%% %7.1f%% %7.1f%% %8.1f %6d/%d %8.1f"
 			% [name, _mean(shares) * 100.0, shares.min() * 100.0, shares.max() * 100.0,
-				_mean(colony_counts[name]), int(wipeouts[name]), _runs])
+				_mean(colony_counts[name]), int(wipeouts[name]), _runs, _mean(traits[name])])
 	quit(0)
 	return true
 

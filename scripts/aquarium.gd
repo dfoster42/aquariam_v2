@@ -21,6 +21,12 @@ signal food_changed(count: int)
 signal territory_changed(colonies: int)
 signal colony_founded(faction: Faction)
 signal colony_lost(faction: Faction)
+## A faction earned a trait from its tech tree.
+signal faction_evolved(faction: Faction, trait_: FactionTrait)
+## A beaten lineage reached down and founded `to` on deeper ground.
+signal faction_descended(from: Faction, to: Faction)
+## A faction's last colony died.
+signal faction_extinct(faction: Faction)
 ## Fires when the undo button should enable or disable.
 signal undo_changed(available: bool)
 
@@ -142,6 +148,12 @@ var _undo_available: bool = false
 var _colonies: Array[Colony] = []
 var _territory: Territory
 var _seabed: Seabed
+## Each faction's progress through its tech tree in this tank.
+var _progress: Dictionary = {}
+## Colonies a disaster has wounded, watched until they either die or stop draining.
+var _wounded: Dictionary = {}
+## Factions with a colony that lived through a disaster since the last progress pass.
+var _survived: Dictionary = {}
 ## Damage that has been decided but has not landed yet: [{colony, amount, at}].
 var _pending: Array[Dictionary] = []
 var _disaster_clock: float = 0.0
@@ -174,6 +186,8 @@ func _ready() -> void:
 	available_factions = available_factions.filter(func(f: Faction) -> bool: return f != null)
 	_seabed = Seabed.new(_bounds)
 	_territory = Territory.new(_bounds, _seabed)
+	for f in available_factions:
+		_progress[f] = FactionProgress.new(f)
 
 	background.modulate = backdrop_tint
 	_fit_background()
@@ -243,8 +257,70 @@ func _tick_colonies(delta: float) -> void:
 	_since_territory += delta
 	if _since_territory < TERRITORY_INTERVAL:
 		return
+	# The time that actually passed, not the interval. A pass fires once the accumulator
+	# OVERSHOOTS the interval, so crediting the interval ran every tech clock slow — by
+	# 17% at ten ticks a second: 32 seconds of play counted as 26.5.
+	var elapsed := _since_territory
 	_since_territory = 0.0
 	_rebuild_territory()
+	_advance_tech(elapsed)
+
+## Every faction's earned traits, keyed by faction resource path. What a save keeps.
+func progress_snapshot() -> Dictionary:
+	var out: Dictionary = {}
+	for f: Faction in _progress:
+		var paths := (_progress[f] as FactionProgress).to_paths()
+		if not paths.is_empty():
+			out[f.resource_path] = paths
+	return out
+
+## This faction's progress in this tank. Made on demand for a faction the tank was not
+## built with, so a colony is never left reading raw stats.
+func progress_for(faction: Faction) -> FactionProgress:
+	if faction == null:
+		return null
+	if not _progress.has(faction):
+		_progress[faction] = FactionProgress.new(faction)
+	return _progress[faction]
+
+## Moves every faction along its tech tree by `elapsed` seconds.
+##
+## Run on the territory pass, not per frame: every condition is about ground held or
+## colonies standing, which only change when the map is recomputed.
+func _advance_tech(elapsed: float) -> void:
+	_settle_wounded()
+	var facts: Dictionary = {}
+	for f: Faction in _progress:
+		facts[f] = {"share": 0.0, "colonies": 0, "basins": 0,
+			"survived_disaster": _survived.has(f)}
+	var basins: Dictionary = {}
+	for colony in _colonies:
+		var f := colony.faction
+		if not facts.has(f):
+			continue
+		facts[f]["colonies"] += 1
+		var basin := _seabed.basin_at(colony.global_position.x) if colony.is_benthic() else -1
+		if basin >= 0:
+			if not basins.has(f):
+				basins[f] = {}
+			(basins[f] as Dictionary)[basin] = true
+	for f: Faction in _progress:
+		facts[f]["share"] = _territory.faction_share(f)
+		facts[f]["basins"] = (basins.get(f, {}) as Dictionary).size()
+		for earned in (_progress[f] as FactionProgress).tick(elapsed, facts[f]):
+			faction_evolved.emit(f, earned)
+	_survived.clear()
+
+## Notes which wounded colonies have come through. A colony counts as having survived
+## once its wound has fully drained and it is still standing.
+func _settle_wounded() -> void:
+	for colony: Variant in _wounded.keys():
+		if not is_instance_valid(colony) or (colony as Colony).is_dead():
+			_wounded.erase(colony)
+			continue
+		if not (colony as Colony).is_dying():
+			_survived[(colony as Colony).faction] = true
+			_wounded.erase(colony)
 
 ## Lands any scheduled damage whose moment has come.
 ##
@@ -262,7 +338,8 @@ func _tick_pending(delta: float) -> void:
 		var colony: Colony = entry["colony"]
 		if colony == null or not is_instance_valid(colony) or colony.is_dead():
 			continue
-		colony.damage(float(entry["amount"]))
+		if colony.damage(float(entry["amount"])) > 0.0:
+			_wounded[colony] = true
 		_mark_disaster(colony.global_position, colony.extent().x,
 			colony.faction.color if colony.faction != null else Color.WHITE)
 	_pending = still_waiting
@@ -348,6 +425,7 @@ func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1
 
 	var colony: Colony = COLONY_SCENE.instantiate()
 	colony.configure(faction, start_biomass, ground)
+	colony.progress = progress_for(faction)
 	# A reef grows on the ground: a tap anywhere in a column founds one on the seabed
 	# below the finger rather than leaving it hanging in open water, which is what made
 	# the colonies read as anemones floating in mid-air. A shoal instead sits in its own
@@ -401,7 +479,10 @@ func strike(position: Vector2, radius: float = STRIKE_RADIUS,
 		var distance := colony.global_position.distance_to(position)
 		if distance > radius:
 			continue
-		destroyed += colony.damage(power * (1.0 - distance / radius))
+		var dealt := colony.damage(power * (1.0 - distance / radius))
+		if dealt > 0.0:
+			_wounded[colony] = true
+		destroyed += dealt
 	# Marked whether or not it connected: a tap on open water that shows nothing is a
 	# tap the player cannot tell from a tap the game missed.
 	_mark_disaster(position, radius * 0.6, Color(1.0, 0.95, 0.85))
@@ -549,6 +630,7 @@ func _on_colony_descending(parent: Colony, successor: Faction) -> void:
 	# otherwise the one thing in the simulation that happens with no visible cause.
 	# `colony_founded` is not emitted here: plant_colony already owns that signal.
 	_mark_disaster(colony.global_position, colony.extent().x * 0.7, successor.color)
+	faction_descended.emit(parent.faction, successor)
 
 ## The nearest x that `successor` may be founded on and that is meaningfully deeper than
 ## `parent` stands. Negative when there is nowhere to go.
@@ -579,6 +661,10 @@ func _on_colony_died(colony: Colony) -> void:
 	var faction := colony.faction
 	if _detach_colony(colony):
 		colony_lost.emit(faction)
+		for other in _colonies:
+			if other.faction == faction:
+				return
+		faction_extinct.emit(faction)
 
 func _detach_colony(colony: Colony) -> bool:
 	var index := _colonies.find(colony)
@@ -603,6 +689,8 @@ func seabed() -> Seabed:
 
 func clear_colonies() -> void:
 	_pending.clear()
+	_wounded.clear()
+	_survived.clear()
 	_disaster_clock = 0.0
 	for colony in _colonies:
 		colony.get_parent().remove_child(colony)
@@ -1133,6 +1221,13 @@ func restore(data: Dictionary) -> bool:
 				float(entry.get("biomass", -1.0)))
 			if restored_colony != null:
 				restored_colony.age = float(entry.get("age", 0.0))
+
+	var earned: Variant = data.get("progress", {})
+	if typeof(earned) == TYPE_DICTIONARY:
+		for f in available_factions:
+			var paths: Variant = (earned as Dictionary).get(f.resource_path, [])
+			if typeof(paths) == TYPE_ARRAY:
+				progress_for(f).restore_paths(paths)
 
 	var by_path: Dictionary = {}
 	for species in available_species:

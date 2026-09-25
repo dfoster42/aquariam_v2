@@ -94,6 +94,11 @@ enum Claim {
 ## thin rather than blink out.
 @export_range(0.0, 20.0, 0.1) var decay_unsupported: float = 2.2
 
+@export_group("Tech")
+## The faction's tech tree. Each trait may name another it `requires`; the roots are the
+## ones that do not. Order only matters for display.
+@export var tech: Array[FactionTrait] = []
+
 @export_group("Descent")
 ## Whether the player may found this faction directly.
 ##

@@ -79,6 +79,12 @@ func _process(_delta: float) -> bool:
 		4:
 			_shoot("5-aftermath")
 			_report()
+			var tech := _ui.find_child("TechButton", true, false) as Button
+			if tech != null:
+				tech.pressed.emit()
+			_next = _frames + SETTLE
+		5:
+			_shoot("6-tech")
 			quit(0)
 			return true
 	_step += 1
