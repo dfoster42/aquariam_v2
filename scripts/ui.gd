@@ -54,6 +54,11 @@ const ICON_REMOVE: Texture2D = preload("res://assets/textures/ui/remove.png")
 ## The strike has no glyph of its own yet; the anemone stands in, tinted by the theme
 ## like every other tile. Drawing one belongs with the rest of tools/art/draw_ui_icons.py.
 const ICON_COLONY: Texture2D = preload("res://assets/textures/anemone.png")
+## What a reef looks like once a bleach has been through it.
+const BLEACHED: Color = Color(0.92, 0.94, 0.9)
+## Below this share a faction is left off the standings, so a seedling does not push a
+## real contender onto a second line.
+const MIN_STANDING: float = 0.005
 
 @export var aquarium_path: NodePath = ^"../Aquarium"
 
@@ -70,6 +75,7 @@ var _group := ButtonGroup.new()
 @onready var dock_safe: MarginContainer = %DockSafe
 @onready var hint: Label = %Hint
 @onready var picker: HBoxContainer = %Picker
+@onready var standings: HFlowContainer = %Standings
 @onready var sheet: Control = $Root/Sheet
 @onready var sheet_safe: MarginContainer = %SheetSafe
 @onready var tank_list: VBoxContainer = %TankList
@@ -102,6 +108,7 @@ func _ready() -> void:
 	_aquarium.paused_changed.connect(_on_paused_changed)
 	_aquarium.population_changed.connect(_on_population_changed)
 	_aquarium.species_selected.connect(_on_species_selected)
+	_aquarium.territory_changed.connect(_on_territory_changed)
 
 	_build_picker()
 	_on_population_changed(_aquarium.population())
@@ -352,9 +359,22 @@ func _build_picker() -> void:
 	picker.add_child(remove)
 
 	if not _aquarium.available_factions.is_empty():
-		var bleach := _tile("Strike", ICON_REMOVE)
-		bleach.pressed.connect(func() -> void:
+		var strike := _tile("Strike", ICON_REMOVE)
+		strike.pressed.connect(func() -> void:
 			_aquarium.set_striking(true)
+			_refresh_hint())
+		picker.add_child(strike)
+
+		# Separate from Strike because they are different verbs. Only Strike was on the
+		# picker, so the travelling disaster the whole prototype was built and measured
+		# around could not be triggered by a player at all. The bleached anemone stands
+		# in for a glyph of its own until one is drawn.
+		var bleach := _tile("Bleach", ICON_COLONY)
+		bleach.add_theme_color_override("icon_normal_color", BLEACHED)
+		bleach.add_theme_color_override("icon_pressed_color", BLEACHED)
+		bleach.add_theme_color_override("icon_hover_color", BLEACHED)
+		bleach.pressed.connect(func() -> void:
+			_aquarium.set_bleaching(true)
 			_refresh_hint())
 		picker.add_child(bleach)
 
@@ -396,8 +416,16 @@ func _divider() -> VSeparator:
 func _refresh_hint() -> void:
 	if _aquarium.striking:
 		hint.text = "Tap the reef to strike it"
+	elif _aquarium.bleaching:
+		hint.text = "Tap a reef to bleach it and everything it touches"
 	elif _aquarium.selected_faction != null:
-		hint.text = "Tap the floor to found %s" % _aquarium.selected_faction.display_name
+		var faction := _aquarium.selected_faction
+		# A shoal is released into its own band of water, wherever in x the tap lands. Telling
+		# the player to tap the floor for one was simply wrong.
+		if faction.claim == Faction.Claim.PELAGIC:
+			hint.text = "Tap the water to release a %s shoal" % faction.display_name
+		else:
+			hint.text = "Tap the floor to found %s" % faction.display_name
 	elif _aquarium.removing:
 		hint.text = "Tap a fish or plant to remove it"
 	elif _aquarium.feeding:
@@ -415,6 +443,46 @@ func _refresh_hint() -> void:
 ## a long u, and a pronunciation table for five fish would be the wrong trade.
 static func _article(name: String) -> String:
 	return "an" if not name.is_empty() and "aeiouAEIOU".contains(name[0]) else "a"
+
+## Who holds how much of the sea, strongest first.
+##
+## Nothing on screen said who was winning. The shares were computed four times a second
+## and only ever printed by the test harnesses, so a player could watch a faction lose
+## half its ground and have nothing but the colour to go on. Hidden while there are no
+## colonies, so a plain aquarium still looks like one.
+func _on_territory_changed(_count: int) -> void:
+	var territory := _aquarium.territory()
+	if territory == null:
+		return
+	var rows: Array = []
+	for faction in _aquarium.available_factions:
+		var share := territory.faction_share(faction)
+		if share >= MIN_STANDING:
+			rows.append([faction, share])
+	rows.sort_custom(func(a: Array, b: Array) -> bool: return float(a[1]) > float(b[1]))
+
+	standings.visible = not rows.is_empty()
+	# Reused rather than rebuilt: this runs four times a second.
+	while standings.get_child_count() < rows.size():
+		standings.add_child(_standing_label())
+	for i in standings.get_child_count():
+		var label := standings.get_child(i) as Label
+		if i >= rows.size():
+			label.visible = false
+			continue
+		var faction: Faction = rows[i][0]
+		label.visible = true
+		label.text = "%s %d%%" % [faction.display_name, roundi(float(rows[i][1]) * 100.0)]
+		label.add_theme_color_override("font_color", faction.color.lerp(Color.WHITE, 0.2))
+
+## One entry on the standings. Outlined, because it sits directly on the water and the
+## faction colours are the same colours as the washes behind them.
+func _standing_label() -> Label:
+	var label := Label.new()
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.1, 0.9))
+	label.add_theme_constant_override("outline_size", 8)
+	return label
 
 func _on_population_changed(count: int) -> void:
 	population_label.text = "%d fish" % count

@@ -48,7 +48,13 @@ jobs:
         run: |
           set -euo pipefail
           failed=0
-          for test in smoke bite shelter feeding slots settings edit offline offline_restore ecosystem; do
+          # Every test file, found rather than listed. The list was hard-coded, and when
+          # colony_test and seabed_test were added nobody added them to it — so a green
+          # check covered ten suites while the PR said twelve, and none of the colony or
+          # seabed tests had ever run here.
+          tests=$(ls test/*_test.gd | xargs -n1 basename | sed 's/_test\.gd$//')
+          [ -n "$tests" ] || { echo "no tests found"; exit 1; }
+          for test in $tests; do
             echo "::group::$test"
             godot --headless --script "res://test/${test}_test.gd" 2>&1 | tee "$test.log"
             if grep -qx 'RESULT: PASS' "$test.log"; then

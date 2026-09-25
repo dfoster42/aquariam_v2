@@ -117,6 +117,14 @@ var removing: bool = false
 var selected_faction: Faction
 ## Taps call down a strike instead of placing anything.
 var striking: bool = false
+## Taps bleach the reef under the finger and everything of its faction it touches.
+##
+## Its own mode, and not a variant of the strike, because the two are different verbs:
+## a strike is a hole punched at a point, a bleach is a disaster that travels. The UI
+## shipped with only the strike reachable, which meant the thing every measurement and
+## every screenshot in the prototype was about — the travelling bleach — could only be
+## triggered by the demo and the tests. The player could not do it.
+var bleaching: bool = false
 
 var _fish: Array[Fish] = []
 var _decor: Array[Decor] = []
@@ -416,6 +424,9 @@ func strike(position: Vector2, radius: float = STRIKE_RADIUS,
 func bleach(position: Vector2, radius: float = STRIKE_RADIUS) -> float:
 	var origin := _nearest_colony(position, radius)
 	if origin == null:
+		# Marked even when it finds nothing, as a strike is: a tap that shows nothing
+		# cannot be told from a tap the game missed.
+		_mark_disaster(position, radius * 0.4, Color(0.92, 0.94, 0.9))
 		return 0.0
 
 	var faction := origin.faction
@@ -610,11 +621,23 @@ func select_faction(faction: Faction) -> void:
 	feeding = false
 	removing = false
 	striking = false
+	bleaching = false
 
 ## Arms the strike: the next tap calls one down instead of placing anything.
 func set_striking(on: bool) -> void:
 	striking = on
 	if on:
+		bleaching = false
+		selected_faction = null
+		selected_decor = null
+		feeding = false
+		removing = false
+
+## Arms the bleach: the next tap starts a disaster on the reef under the finger.
+func set_bleaching(on: bool) -> void:
+	bleaching = on
+	if on:
+		striking = false
 		selected_faction = null
 		selected_decor = null
 		feeding = false
@@ -733,6 +756,9 @@ func place_selected(position: Vector2, reach: float = REMOVE_REACH) -> Node2D:
 	# putting the biomass back would not put the map back.
 	if striking:
 		strike(position)
+		return null
+	if bleaching:
+		bleach(position)
 		return null
 
 	var placed: Node2D = null
@@ -897,6 +923,7 @@ func set_feeding(on: bool) -> void:
 		selected_decor = null
 		selected_faction = null
 		striking = false
+		bleaching = false
 		removing = false
 
 ## Arms deletion: the next tap takes something out instead of putting something in.
@@ -906,6 +933,7 @@ func set_removing(on: bool) -> void:
 		selected_decor = null
 		selected_faction = null
 		striking = false
+		bleaching = false
 		feeding = false
 
 func _on_food_consumed(pellet: Food) -> void:
@@ -957,6 +985,7 @@ func select_species(species: FishSpecies) -> void:
 	selected_decor = null
 	selected_faction = null
 	striking = false
+	bleaching = false
 	feeding = false
 	removing = false
 	if selected_species == species:
@@ -968,6 +997,7 @@ func select_decor(kind: DecorKind) -> void:
 	selected_decor = kind
 	selected_faction = null
 	striking = false
+	bleaching = false
 	feeding = false
 	removing = false
 
