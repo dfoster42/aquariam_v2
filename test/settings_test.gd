@@ -2,14 +2,14 @@ extends SceneTree
 ## Things the app remembers that are not the tank itself.
 ## Run: godot --headless --script res://test/settings_test.gd
 
-const MUTE_PATH: String = "user://audio.cfg"
+
 
 var _started: bool = false
 var _failures: Array[String] = []
 
 func _initialize() -> void:
-	if FileAccess.file_exists(MUTE_PATH):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(MUTE_PATH))
+	if FileAccess.file_exists(UserData.path("audio.cfg")):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(UserData.path("audio.cfg")))
 
 func _process(_d: float) -> bool:
 	if _started:
@@ -29,10 +29,10 @@ func _run() -> void:
 	# "until next time", and an ambient app that comes back loud gets deleted.
 	main.set_muted(true)
 	_check(main.is_muted(), "set_muted(true) did not take effect")
-	_check(FileAccess.file_exists(MUTE_PATH), "muting wrote no settings file")
+	_check(FileAccess.file_exists(UserData.path("audio.cfg")), "muting wrote no settings file")
 
 	var config := ConfigFile.new()
-	_check(config.load(MUTE_PATH) == OK, "the settings file is unreadable")
+	_check(config.load(UserData.path("audio.cfg")) == OK, "the settings file is unreadable")
 	_check(bool(config.get_value("audio", "muted", false)), "the settings file does not record the mute")
 
 	# A second instance reads it back, which is what a relaunch does.
@@ -47,7 +47,7 @@ func _run() -> void:
 
 	# Leave the machine as we found it.
 	second.set_muted(false)
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(MUTE_PATH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(UserData.path("audio.cfg")))
 
 	if _failures.is_empty():
 		print("RESULT: PASS")
