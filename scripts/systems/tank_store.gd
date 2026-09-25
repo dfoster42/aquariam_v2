@@ -205,6 +205,9 @@ static func capture(tank: Aquarium) -> Dictionary:
 		"fish": fish,
 		"decor": decor,
 		"colonies": colonies,
+		# Traits earned, per faction, by resource path. A tank that spent twenty minutes
+		# earning a canopy should not come back as a seedling.
+		"progress": tank.progress_snapshot(),
 	}
 
 static func save(tank: Aquarium, slot_id: String = "") -> Error:

@@ -1,7 +1,10 @@
-[gd_resource type="Resource" script_class="Faction" load_steps=3 format=3]
+[gd_resource type="Resource" script_class="Faction" load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/faction.gd" id="1_faction"]
 [ext_resource type="Resource" path="res://resources/species/anemonefish.tres" id="2_species"]
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="t_script"]
+[ext_resource type="Resource" path="res://resources/tech/vent_smoker.tres" id="t_0"]
+[ext_resource type="Resource" path="res://resources/tech/vent_chemosynthesis.tres" id="t_1"]
 
 [resource]
 script = ExtResource("1_faction")
@@ -19,3 +22,4 @@ biomass_per_fish = 30.0
 spread_interval = 16.0
 spread_at = 0.55
 spread_cost = 18.0
+tech = Array[ExtResource("t_script")]([ExtResource("t_0"), ExtResource("t_1")])

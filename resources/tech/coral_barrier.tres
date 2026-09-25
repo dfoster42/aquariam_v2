@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="FactionTrait" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="1_trait"]
+[ext_resource type="Resource" path="res://resources/tech/coral_branching.tres" id="2_req"]
+
+[resource]
+script = ExtResource("1_trait")
+display_name = "Barrier Reef"
+description = "wider, heavier reefs"
+requires = ExtResource("2_req")
+condition = 1
+threshold = 2.0
+hold_for = 20.0
+capacity_mul = 1.25
+grip_mul = 1.15

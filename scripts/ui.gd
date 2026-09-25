@@ -50,12 +50,15 @@ const ICON_CLOSE: Texture2D = preload("res://assets/textures/ui/close.png")
 const ICON_FEED: Texture2D = preload("res://assets/textures/ui/feed.png")
 const ICON_FISH: Texture2D = preload("res://assets/textures/ui/fish.png")
 const ICON_UNDO: Texture2D = preload("res://assets/textures/ui/undo.png")
+const ICON_TECH: Texture2D = preload("res://assets/textures/ui/tech.png")
 const ICON_REMOVE: Texture2D = preload("res://assets/textures/ui/remove.png")
 ## The strike has no glyph of its own yet; the anemone stands in, tinted by the theme
 ## like every other tile. Drawing one belongs with the rest of tools/art/draw_ui_icons.py.
 const ICON_COLONY: Texture2D = preload("res://assets/textures/anemone.png")
 ## What a reef looks like once a bleach has been through it.
 const BLEACHED: Color = Color(0.92, 0.94, 0.9)
+## Seconds an event line stays up before it fades.
+const FEED_HOLD: float = 4.5
 ## Below this share a faction is left off the standings, so a seedling does not push a
 ## real contender onto a second line.
 const MIN_STANDING: float = 0.005
@@ -76,6 +79,12 @@ var _group := ButtonGroup.new()
 @onready var hint: Label = %Hint
 @onready var picker: HBoxContainer = %Picker
 @onready var standings: HFlowContainer = %Standings
+@onready var top_bar: HBoxContainer = $Root/Safe/Stack/TopBar
+
+var _feed: Label
+var _feed_tween: Tween
+var _tech_sheet: Control
+var _tech_list: VBoxContainer
 @onready var sheet: Control = $Root/Sheet
 @onready var sheet_safe: MarginContainer = %SheetSafe
 @onready var tank_list: VBoxContainer = %TankList
@@ -109,6 +118,11 @@ func _ready() -> void:
 	_aquarium.population_changed.connect(_on_population_changed)
 	_aquarium.species_selected.connect(_on_species_selected)
 	_aquarium.territory_changed.connect(_on_territory_changed)
+	_aquarium.faction_evolved.connect(_on_faction_evolved)
+	_aquarium.faction_descended.connect(_on_faction_descended)
+	_aquarium.faction_extinct.connect(_on_faction_extinct)
+	_build_feed()
+	_build_tech_sheet()
 	# Drawn once now from whatever the map already holds. The Aquarium restores its save
 	# in its own _ready, which runs before this one, so the territory_changed those
 	# restored colonies emitted has already gone past. Without this a reopened tank shows
@@ -478,7 +492,11 @@ func _on_territory_changed(_count: int) -> void:
 			continue
 		var faction: Faction = rows[i][0]
 		label.visible = true
-		label.text = "%s %d%%" % [faction.display_name, roundi(float(rows[i][1]) * 100.0)]
+		# One dot per trait earned, so progress along the tech tree is visible from the
+		# same line that says who is winning.
+		var earned := _aquarium.progress_for(faction).unlocked.size()
+		label.text = "%s %d%%%s" % [faction.display_name, roundi(float(rows[i][1]) * 100.0),
+			(" " + "•".repeat(earned)) if earned > 0 else ""]
 		label.add_theme_color_override("font_color", faction.color.lerp(Color.WHITE, 0.2))
 
 ## One entry on the standings. Outlined, because it sits directly on the water and the
@@ -488,6 +506,187 @@ func _standing_label() -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.1, 0.9))
 	label.add_theme_constant_override("outline_size", 8)
+	return label
+
+# ------------------------------------------------------------------- the feed
+
+## One line under the standings for the things worth seeing happen: a faction evolving,
+## reaching down into a basin, or dying out. Nothing said any of it before — a trait
+## would change a colony's stats with no sign, and a faction could vanish unremarked.
+func _build_feed() -> void:
+	_feed = Label.new()
+	_feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_feed.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_feed.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.1, 0.9))
+	_feed.add_theme_constant_override("outline_size", 8)
+	_feed.modulate.a = 0.0
+	var stack := standings.get_parent()
+	stack.add_child(_feed)
+	stack.move_child(_feed, standings.get_index() + 1)
+
+## Shows `text` in `tint`, then fades it. A newer event replaces an older one at once:
+## a feed that queued would still be announcing a descent after the next one landed.
+func announce(text: String, tint: Color) -> void:
+	if _feed == null:
+		return
+	_feed.text = text
+	_feed.add_theme_color_override("font_color", tint.lerp(Color.WHITE, 0.25))
+	if _feed_tween != null:
+		_feed_tween.kill()
+	_feed.modulate.a = 1.0
+	_feed_tween = create_tween()
+	_feed_tween.tween_interval(FEED_HOLD)
+	_feed_tween.tween_property(_feed, "modulate:a", 0.0, 0.8)
+
+func feed_text() -> String:
+	return _feed.text if _feed != null else ""
+
+func _on_faction_evolved(faction: Faction, trait_: FactionTrait) -> void:
+	announce("%s evolved %s: %s" % [faction.display_name, trait_.display_name,
+		trait_.description], faction.color)
+	if _tech_sheet != null and _tech_sheet.visible:
+		_fill_tech_list()
+
+func _on_faction_descended(from: Faction, to: Faction) -> void:
+	announce("%s reached down into a basin: %s" % [from.display_name, to.display_name],
+		to.color)
+
+func _on_faction_extinct(faction: Faction) -> void:
+	announce("%s is gone" % faction.display_name, faction.color)
+
+# --------------------------------------------------------------- the tech sheet
+
+## Every faction's tech tree: what it has earned, what it is working toward and how far,
+## and what is still locked behind something else.
+func _build_tech_sheet() -> void:
+	var button := Button.new()
+	button.icon = ICON_TECH
+	button.tooltip_text = "Tech"
+	button.custom_minimum_size = Vector2(80, 80)
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	button.focus_mode = Control.FOCUS_NONE
+	button.theme_type_variation = &"IconButton"
+	button.name = "TechButton"
+	top_bar.add_child(button)
+	top_bar.move_child(button, tanks_button.get_index())
+	button.pressed.connect(_toggle_tech)
+
+	_tech_sheet = Control.new()
+	_tech_sheet.name = "TechSheet"
+	_tech_sheet.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tech_sheet.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tech_sheet.visible = false
+	$Root.add_child(_tech_sheet)
+
+	# Tapping outside the card closes it, as the tank switcher does.
+	var scrim := ColorRect.new()
+	scrim.color = Color(0.0, 0.03, 0.06, 0.55)
+	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scrim.add_to_group("ui_blocker")
+	scrim.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.pressed:
+			_toggle_tech())
+	_tech_sheet.add_child(scrim)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 40)
+	_tech_sheet.add_child(margin)
+
+	var card := PanelContainer.new()
+	card.theme_type_variation = &"Sheet"
+	card.add_to_group("ui_blocker")
+	margin.add_child(card)
+
+	var stack := VBoxContainer.new()
+	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stack.add_theme_constant_override("separation", 14)
+	card.add_child(stack)
+
+	var header := HBoxContainer.new()
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stack.add_child(header)
+	var title := Label.new()
+	title.text = "Tech"
+	title.theme_type_variation = &"Title"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close := Button.new()
+	close.icon = ICON_CLOSE
+	close.theme_type_variation = &"IconButton"
+	close.focus_mode = Control.FOCUS_NONE
+	close.custom_minimum_size = Vector2(80, 80)
+	close.pressed.connect(_toggle_tech)
+	header.add_child(close)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.add_to_group("ui_blocker")
+	stack.add_child(scroll)
+	_tech_list = VBoxContainer.new()
+	_tech_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tech_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tech_list.add_theme_constant_override("separation", 6)
+	scroll.add_child(_tech_list)
+
+func _toggle_tech() -> void:
+	_tech_sheet.visible = not _tech_sheet.visible
+	if _tech_sheet.visible:
+		_fill_tech_list()
+
+## Rebuilt on open, and whenever a trait is earned while it is open.
+func _fill_tech_list() -> void:
+	for child in _tech_list.get_children():
+		_tech_list.remove_child(child)
+		child.queue_free()
+	for faction in _aquarium.available_factions:
+		if faction.tech.is_empty():
+			continue
+		var progress := _aquarium.progress_for(faction)
+		var name := _row("%s  %d of %d" % [faction.display_name, progress.unlocked.size(),
+			faction.tech.size()], faction.color.lerp(Color.WHITE, 0.2))
+		name.theme_type_variation = &"Title"
+		_tech_list.add_child(name)
+		for t in faction.tech:
+			_tech_list.add_child(_row(_trait_line(progress, t), _trait_tint(progress, t)))
+
+## What one trait says in the sheet: its name, what it does, and where it stands.
+func _trait_line(progress: FactionProgress, t: FactionTrait) -> String:
+	if progress.has(t):
+		return "• %s: %s" % [t.display_name, t.description]
+	if t.requires != null and not progress.has(t.requires):
+		return "    %s: after %s" % [t.display_name, t.requires.display_name]
+	var how := ""
+	match t.condition:
+		FactionTrait.Condition.HOLD_SHARE:
+			how = "hold %d%% of the sea for %ds" % [roundi(t.threshold * 100.0), roundi(t.hold_for)]
+		FactionTrait.Condition.COLONIES:
+			how = "keep %d colonies for %ds" % [roundi(t.threshold), roundi(t.hold_for)]
+		FactionTrait.Condition.SURVIVE_DISASTER:
+			how = "live through a disaster"
+		FactionTrait.Condition.HOLD_BASINS:
+			how = "hold %d basin%s for %ds" % [roundi(t.threshold),
+				"" if roundi(t.threshold) == 1 else "s", roundi(t.hold_for)]
+	var done := progress.progress_of(t)
+	var bar := (" %d%%" % roundi(done * 100.0)) if done > 0.0 else ""
+	return "    %s: %s%s" % [t.display_name, how, bar]
+
+func _trait_tint(progress: FactionProgress, t: FactionTrait) -> Color:
+	if progress.has(t):
+		return Color.WHITE
+	if t.requires != null and not progress.has(t.requires):
+		return Color(1, 1, 1, 0.38)
+	return Color(1, 1, 1, 0.7)
+
+func _row(text: String, tint: Color) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_color_override("font_color", tint)
 	return label
 
 func _on_population_changed(count: int) -> void:

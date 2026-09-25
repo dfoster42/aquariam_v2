@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="FactionTrait" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="1_trait"]
+
+[resource]
+script = ExtResource("1_trait")
+display_name = "Calcified"
+description = "shrugs off a third of every disaster"
+condition = 2
+threshold = 0.0
+hold_for = 0.0
+hardness = 0.35

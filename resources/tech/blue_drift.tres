@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="FactionTrait" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="1_trait"]
+
+[resource]
+script = ExtResource("1_trait")
+display_name = "Drift"
+description = "lives longer over open ground"
+condition = 0
+threshold = 0.12
+hold_for = 25.0
+decay_mul = 0.4

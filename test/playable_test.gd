@@ -34,6 +34,7 @@ func _process(_delta: float) -> bool:
 	_check_standings()
 	_check_bleach_is_reachable()
 	_check_standings_on_reopen()
+	_check_tech_is_visible()
 
 	if _failures.is_empty():
 		print("RESULT: PASS")
@@ -169,3 +170,67 @@ func _check_standings_on_reopen() -> void:
 	root.remove_child(reopened)
 	reopened.free()
 	TankStore.clear()
+
+## Earning a trait shows: the feed says so, the standings grow a dot, and the Tech sheet
+## lists every faction's tree.
+func _check_tech_is_visible() -> void:
+	_tank.clear_colonies()
+	for f in _tank.available_factions:
+		_tank.progress_for(f).reset()
+	var kelp: Faction = null
+	for f in _tank.available_factions:
+		if f.display_name == "Kelp Court":
+			kelp = f
+	_press("Kelp Court")
+	var x := 1500.0
+	for i in 200:
+		var probe := 1500.0 + float(i) * 12.0 * (1.0 if i % 2 == 0 else -1.0)
+		if _tank.can_found(kelp, probe):
+			x = probe
+			break
+	_tap(Vector2(x, 300.0))
+	# A tapped colony starts as a seedling holding a few percent of the sea; Holdfast
+	# wants 8% held for 20s. Let it grow, through the tank's own tick.
+	for i in 900:
+		_tank._tick_colonies(0.1)
+	_check(_tank.progress_for(kelp).unlocked.size() >= 1, "a lone kelp earned nothing in 60s")
+	_check(_ui.feed_text().contains("evolved"),
+		"earning a trait put nothing in the feed: '%s'" % _ui.feed_text())
+	_tank._rebuild_territory()
+	var standings := ""
+	for child in (_ui.get_node("%Standings") as Control).get_children():
+		if child is Label and child.visible:
+			standings += child.text
+	_check(standings.contains("•"), "the standings show no dot for an earned trait: '%s'" % standings)
+
+	var button := _ui.find_child("TechButton", true, false) as Button
+	_check(button != null, "the top bar has no Tech button")
+	if button == null:
+		return
+	button.pressed.emit()
+	var sheet := _ui.find_child("TechSheet", true, false) as Control
+	_check(sheet != null and sheet.visible, "pressing Tech did not open the tech sheet")
+	var text := ""
+	for label in sheet.find_children("*", "Label", true, false):
+		text += (label as Label).text + "\n"
+	for f in _tank.available_factions:
+		if f.tech.is_empty():
+			continue
+		_check(text.contains(f.display_name), "the tech sheet does not list %s" % f.display_name)
+		for t in f.tech:
+			_check(text.contains(t.display_name), "the tech sheet does not list %s" % t.display_name)
+	# Every trait says something after its name, and one still locked behind another says
+	# which. Checked against whatever the run actually earned rather than a fixed line,
+	# because how far the kelp got in its 90 seconds is the simulation's business.
+	var locked_seen := false
+	for f in _tank.available_factions:
+		var p := _tank.progress_for(f)
+		for t in f.tech:
+			_check(text.contains(t.display_name + ": "), "%s is listed with no state" % t.display_name)
+			if t.requires != null and not p.has(t.requires):
+				locked_seen = true
+				_check(text.contains("%s: after %s" % [t.display_name, t.requires.display_name]),
+					"%s does not say it is waiting for %s" % [t.display_name, t.requires.display_name])
+	_check(locked_seen, "no locked trait was on the sheet to check")
+	button.pressed.emit()
+	_check(not sheet.visible, "pressing Tech again did not close the sheet")

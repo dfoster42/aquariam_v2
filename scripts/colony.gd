@@ -66,6 +66,11 @@ var pressure: float = 1.0
 ## makes "a colony you have had for six minutes" a different thing from a fresh one.
 var age: float = 0.0
 
+## This faction's progress in this tank — the traits it has earned. Set by the tank on
+## founding. Every stat a trait can change is read through here, never straight off the
+## Faction, because the Faction is shared by every tank while progress is this tank's.
+var progress: FactionProgress
+
 ## World y of the ground this colony is rooted to. Benthic colonies extrude their claim
 ## upward from here; a pelagic colony ignores it.
 var anchor_y: float = 0.0
@@ -141,15 +146,15 @@ func tick(delta: float) -> void:
 	if _dead:
 		return
 
-	var ceiling := faction.capacity * maxf(pressure, MIN_PRESSURE)
+	var ceiling := _capacity() * maxf(pressure, MIN_PRESSURE)
 	if ceiling > 0.0:
-		biomass += faction.growth_rate * biomass * (1.0 - biomass / ceiling) * delta
+		biomass += _growth() * biomass * (1.0 - biomass / ceiling) * delta
 	# A shoal over open ground has nothing holding it up. Not instant death: it thins
 	# visibly, so striking the reef beneath a pelagic faction reads as a cause and the
 	# shoal's decline reads as the effect, several seconds apart and on different parts
 	# of the screen.
 	if not is_benthic() and not supported:
-		biomass -= faction.decay_unsupported * delta
+		biomass -= faction.decay_unsupported * _p().decay_mul * delta
 	biomass = maxf(biomass, 0.0)
 	_apply_size()
 
@@ -165,7 +170,7 @@ func tick(delta: float) -> void:
 	# Release is paid for out of growth, not out of standing biomass: a colony that has
 	# stalled stops restocking the water, which is what makes a besieged reef read as
 	# besieged rather than merely smaller.
-	_fish_debt += faction.growth_rate * biomass * maxf(pressure, MIN_PRESSURE) * delta
+	_fish_debt += _growth() * biomass * maxf(pressure, MIN_PRESSURE) * delta
 	if _fish_debt >= faction.biomass_per_fish:
 		_fish_debt -= faction.biomass_per_fish
 		released.emit(self, global_position)
@@ -176,13 +181,13 @@ func tick(delta: float) -> void:
 ## put one, and a reef that keeps flinging daughters into ground it has already lost
 ## bleeds mass it needs to hold the ground it has.
 func _tick_spread(delta: float) -> void:
-	if faction.spread_interval <= 0.0 or faction.spread_cost <= 0.0:
+	if _spread_interval() <= 0.0 or faction.spread_cost <= 0.0:
 		return
 	_spread_timer += delta
-	if _spread_timer < faction.spread_interval:
+	if _spread_timer < _spread_interval():
 		return
 	_spread_timer = 0.0
-	if biomass < faction.capacity * faction.spread_at or pressure < 0.5:
+	if biomass < _capacity() * faction.spread_at or pressure < 0.5:
 		return
 	# Sideways only, and clear of its own claim. Benthic factions walk the seabed and
 	# pelagic ones run along their band, so neither has anywhere to go but left or right
@@ -324,8 +329,8 @@ func extent() -> Vector2:
 	if faction == null:
 		return Vector2(r, r)
 	if is_benthic():
-		return Vector2(r * faction.floor_grip, _column_height())
-	return Vector2(r * faction.band_spread, faction.band_thickness * 0.5)
+		return Vector2(r * faction.floor_grip * _p().grip_mul, _column_height())
+	return Vector2(r * faction.band_spread, faction.band_thickness * _p().band_thickness_mul * 0.5)
 
 ## How high the column of water above this colony's floor currently rises.
 ##
@@ -333,10 +338,10 @@ func extent() -> Vector2:
 ## wider — which is the second beat of the clip: the neighbours slide sideways into a
 ## dead interval, and then their flat tops rise.
 func _column_height() -> float:
-	if faction == null or faction.capacity <= 0.0:
+	if faction == null or _capacity() <= 0.0:
 		return BASE_RADIUS
-	var fullness := clampf(biomass / faction.capacity, 0.0, 1.0)
-	return faction.reach_up * lerpf(0.28, 1.0, sqrt(fullness))
+	var fullness := clampf(biomass / _capacity(), 0.0, 1.0)
+	return faction.reach_up * _p().reach_mul * lerpf(0.28, 1.0, sqrt(fullness))
 
 
 ## Pays for a daughter colony. Returns what the daughter should start with, or 0 when
@@ -357,6 +362,9 @@ func pay_to_spread() -> float:
 func damage(amount: float) -> float:
 	if _dead or amount <= 0.0:
 		return 0.0
+	# A hardened reef ignores part of every disaster. Applied here, where both the strike
+	# and the bleach land, so no power can route around it.
+	amount *= 1.0 - _p().hardness
 	var takeable := minf(amount, maxf(biomass - _draining, 0.0))
 	if takeable <= 0.0:
 		return 0.0
@@ -389,6 +397,22 @@ func _die() -> void:
 		return
 	_dead = true
 	died.emit(self)
+
+## A neutral progress for a colony built without one — tests, and anything planted
+## before the tank has made one — so the accessors below never have to check.
+static var _neutral := FactionProgress.new()
+
+func _p() -> FactionProgress:
+	return progress if progress != null else _neutral
+
+func _capacity() -> float:
+	return faction.capacity * _p().capacity_mul
+
+func _growth() -> float:
+	return faction.growth_rate * _p().growth_mul
+
+func _spread_interval() -> float:
+	return faction.spread_interval * _p().spread_interval_mul
 
 func _apply_size() -> void:
 	if sprite == null or sprite.texture == null or not sprite.visible:

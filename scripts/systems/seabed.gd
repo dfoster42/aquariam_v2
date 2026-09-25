@@ -99,6 +99,21 @@ func ravine_at(x: float) -> float:
 	var local := x - _bounds.position.x
 	return ravine_depth(local, _bounds.size.x) * _bounds.size.y * (FLOOR_LOW - FLOOR_HIGH)
 
+## Which basin the floor at `x` lies in, as an index into RAVINES, or -1 on open floor.
+## A basin is ground carved at least `min_carving` world units deep.
+func basin_at(x: float, min_carving: float = 60.0) -> int:
+	if ravine_at(x) < min_carving:
+		return -1
+	var t := (x - _bounds.position.x) / maxf(1.0, _bounds.size.x)
+	var best := -1
+	var nearest := INF
+	for i in RAVINES.size():
+		var d := absf(t - float(RAVINES[i][0]))
+		if d < nearest:
+			nearest = d
+			best = i
+	return best
+
 ## Whether `point` is inside the ground.
 func is_rock(point: Vector2) -> bool:
 	return point.y > height_at(point.x)

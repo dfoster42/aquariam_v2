@@ -346,6 +346,11 @@ func _test_bleach() -> void:
 
 	# Contact, not ownership: a colony of the same faction standing on its own across
 	# the map is not part of the same disaster.
+	# The first bleach left survivors, and surviving a disaster is how Coral earns
+	# Calcified — a third off every disaster after it. That is the tech tree working, and
+	# test/tech_test.gd pins it; this check is about where a bleach travels, so it starts
+	# from a faction with nothing earned.
+	tank.progress_for(doomed).reset()
 	var isolated := tank.plant_colony(doomed, Vector2(_ground_x(tank, doomed, 2900.0), 400.0), 60.0)
 	_check(isolated != null, "the isolated colony was not planted")
 	if isolated == null:

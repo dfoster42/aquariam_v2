@@ -163,6 +163,25 @@ def undo() -> Image.Image:
     return _finish(image)
 
 
+def tech() -> Image.Image:
+    """A tech tree: a root node branching to two, one of which branches again.
+
+    Drawn as a tree growing upward from a root at the bottom, so it reads as progression
+    rather than as a network diagram, which is what three evenly spaced nodes did.
+    """
+    image, d, s = _canvas()
+    width = int(s * 0.07)
+    root = (s * 0.50, s * 0.80)
+    left = (s * 0.27, s * 0.50)
+    right = (s * 0.73, s * 0.50)
+    top = (s * 0.73, s * 0.20)
+    for a, b in ((root, left), (root, right), (right, top)):
+        d.line([a, b], fill=WHITE, width=width)
+    for (x, y), r in ((root, 0.105), (left, 0.09), (right, 0.09), (top, 0.09)):
+        d.ellipse([x - s * r, y - s * r, x + s * r, y + s * r], fill=WHITE)
+    return _finish(image)
+
+
 def remove() -> Image.Image:
     """A bin. The one glyph in the set that has to say "this destroys something"."""
     image, d, s = _canvas()
@@ -191,6 +210,7 @@ GLYPHS = {
     "fish": fish,
     "undo": undo,
     "remove": remove,
+    "tech": tech,
 }
 
 
