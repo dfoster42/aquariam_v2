@@ -579,9 +579,16 @@ container.
 `scripts/systems/user_data.gd` decides where files go, once, for the whole run. A run
 started as `godot --script <file>` has a script attached to its main loop; the game —
 launched normally, from the editor, or exported — runs a plain `SceneTree` with none. Both
-halves were measured before this was built on. Script runs get `user://sandbox/`, so a test
-added tomorrow is protected whether or not its author has read this. `TankStore.clear()`
-additionally refuses outright outside the sandbox, as a second lock.
+halves were measured before this was built on. Each script run gets its own directory,
+`user://sandbox/<pid>/`, created on first use, so a test added tomorrow is protected whether
+or not its author has read this — and two runs at once cannot clear each other's files, which
+one shared sandbox allowed. Directories left by runs that have finished are pruned when the
+next run starts: only ones named for a pid, only inside the sandbox, never a live process's.
+`TankStore.clear()` additionally refuses outright outside the sandbox, as a second lock.
+
+Creating the directory matters on its own: `ConfigFile.save()` cannot create a missing
+parent, so `settings_test` failed on a clean checkout and had only ever passed because the
+tests that happen to run before it had made the folder.
 
 `test/sandbox_test.gd` checks every path is in the sandbox **before** touching storage and
 quits on the first that is not, so a regressed sandbox produces a failing test rather than
