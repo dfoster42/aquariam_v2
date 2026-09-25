@@ -17,6 +17,9 @@ func _process(_delta: float) -> bool:
 	_check_surviving_a_disaster_hardens()
 	_check_basins()
 	_check_progress_survives_a_save()
+	_check_restored_borders_use_traits()
+	_check_progress_only_save()
+	_check_clock_survives_a_save()
 	_check_hardness_is_capped()
 	if _failures.is_empty():
 		print("RESULT: PASS")
@@ -196,3 +199,77 @@ func _check_hardness_is_capped() -> void:
 		p.unlock(t)
 	_check(p.hardness <= FactionProgress.MAX_HARDNESS + 0.0001,
 		"stacked hardness reached %.2f; a disaster must always do something" % p.hardness)
+
+## A reopened tank draws its borders with its traits already in effect — with no territory
+## pass run after the restore. Applied after the colonies were planted, Canopy grew a
+## restored column with nothing redrawing the map, so it showed its old borders.
+func _check_restored_borders_use_traits() -> void:
+	TankStore.clear()
+	var tank := _tank()
+	var kelp := _faction(tank, "Kelp Court")
+	var colony := tank.plant_colony(kelp, Vector2(_ground_x(tank, kelp, 1500.0), 400.0), kelp.capacity)
+	var plain := colony.extent().y
+	tank.progress_for(kelp).unlock(_trait(kelp, "Holdfast"))
+	tank.progress_for(kelp).unlock(_trait(kelp, "Canopy"))
+	var tall := colony.extent().y
+	var x := colony.global_position.x
+	TankStore.save(tank)
+	_done(tank)
+
+	# The tank restores its save in its own _ready, which is the path a reopened app
+	# takes. Calling restore() again here would plant every colony a second time, after
+	# the traits were already in place — which is how this check first passed against
+	# the very bug it exists for.
+	var back := _tank()
+	var ground := back.seabed().height_at(x)
+	var above_old_lid := Vector2(x, ground - (plain + (tall - plain) * 0.5))
+	var holder := back.territory().owner_at(above_old_lid)
+	_check(holder != null and holder.faction == kelp,
+		"a reopened tank draws the canopy's borders only after a later territory pass")
+	_done(back)
+	TankStore.clear()
+
+## Progress is saved even with nothing alive to show for it, and comes back.
+func _check_progress_only_save() -> void:
+	TankStore.clear()
+	var tank := _tank()
+	var coral := _faction(tank, "Coral")
+	tank.progress_for(coral).unlock(_trait(coral, "Calcified"))
+	tank.clear_tank()
+	tank.clear_colonies()
+	TankStore.save(tank)
+	_done(tank)
+
+	# The tank restores its save in its own _ready, which is the path a reopened app
+	# takes. Calling restore() again here would plant every colony a second time, after
+	# the traits were already in place — which is how this check first passed against
+	# the very bug it exists for.
+	var back := _tank()
+	_check(back.progress_for(coral).has(_trait(coral, "Calcified")),
+		"a save holding only progress lost it on reopen")
+	_done(back)
+	TankStore.clear()
+
+## A trait partway to being earned is still partway after a save and reopen.
+func _check_clock_survives_a_save() -> void:
+	TankStore.clear()
+	var tank := _tank()
+	var coral := _faction(tank, "Coral")
+	var branching := _trait(coral, "Branching")
+	var p := tank.progress_for(coral)
+	p.tick(branching.hold_for * 0.4, {"share": 1.0, "colonies": 1, "basins": 0, "survived_disaster": false})
+	var before := p.progress_of(branching)
+	_check(before > 0.3 and before < 0.5, "the clock did not advance to 40%% (%.2f)" % before)
+	TankStore.save(tank)
+	_done(tank)
+
+	# The tank restores its save in its own _ready, which is the path a reopened app
+	# takes. Calling restore() again here would plant every colony a second time, after
+	# the traits were already in place — which is how this check first passed against
+	# the very bug it exists for.
+	var back := _tank()
+	var after := back.progress_for(coral).progress_of(branching)
+	_check(absf(after - before) < 0.01,
+		"a clock at %d%% came back at %d%%" % [roundi(before * 100.0), roundi(after * 100.0)])
+	_done(back)
+	TankStore.clear()
