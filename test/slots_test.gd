@@ -107,14 +107,14 @@ func _check_legacy_migration() -> void:
 		"selected": "",
 		"fish": [{"species": "res://resources/species/clownfish.tres", "x": 10, "y": 20, "age": 5}],
 	}
-	var file := FileAccess.open(TankStore.LEGACY_PATH, FileAccess.WRITE)
+	var file := FileAccess.open(TankStore.legacy_path(), FileAccess.WRITE)
 	file.store_string(JSON.stringify(legacy))
 	file.close()
 
 	var slots := TankStore.slots()
 	_check(slots.size() == 1, "the legacy save should have become exactly 1 slot, got %d" % slots.size())
 	_check(TankStore.read().get("fish", []).size() == 1, "the migrated tank lost its fish")
-	_check(not FileAccess.file_exists(TankStore.LEGACY_PATH), "the legacy file should be removed after migration")
+	_check(not FileAccess.file_exists(TankStore.legacy_path()), "the legacy file should be removed after migration")
 
 func _new_tank() -> Aquarium:
 	var tank: Aquarium = load("res://scenes/aquarium.tscn").instantiate()

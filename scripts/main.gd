@@ -5,7 +5,10 @@ extends Node2D
 ## only a tap once the camera has ruled out a drag, so spawning has to be driven
 ## from there rather than from the tank's own _unhandled_input.
 
-const MUTE_PATH: String = "user://audio.cfg"
+## Where the mute setting is kept. A function, not a constant, for the same reason
+## TankStore's paths are: settings_test used to rewrite the player's real setting.
+static func mute_path() -> String:
+	return UserData.path("audio.cfg")
 
 @onready var aquarium: Aquarium = $Aquarium
 @onready var camera: CameraRig = $CameraRig
@@ -20,7 +23,7 @@ func _ready() -> void:
 	get_tree().auto_accept_quit = false
 
 	var config := ConfigFile.new()
-	if config.load(MUTE_PATH) == OK:
+	if config.load(mute_path()) == OK:
 		AudioServer.set_bus_mute(
 			AudioServer.get_bus_index("Master"), bool(config.get_value("audio", "muted", false)))
 
@@ -55,7 +58,7 @@ func set_muted(muted: bool) -> void:
 	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), muted)
 	var config := ConfigFile.new()
 	config.set_value("audio", "muted", muted)
-	config.save(MUTE_PATH)
+	config.save(mute_path())
 
 func is_muted() -> bool:
 	return AudioServer.is_bus_mute(AudioServer.get_bus_index("Master"))

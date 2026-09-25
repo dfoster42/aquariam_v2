@@ -566,6 +566,31 @@ narrowed the band the lateral taper fades across, and the hard-edged rectangles 
 Where a fade BEGINS is free while how far the box reaches is not, so the taper now starts
 about a third of the way out instead of two thirds.
 
+## Tests never touch your saves
+
+Tests, dev tools and the game used to share one user:// directory
+(`~/Library/Application Support/Godot/app_userdata/Aquarium` on macOS), and every test and
+tool calls `TankStore.clear()` on startup. So **running the suite locally deleted the
+player's saved aquariums** — outright, not to the Trash — on every run. `settings_test`
+rewrote the real mute setting, and `slots_test` planted a legacy save in the real directory
+and migrated it into the real slot list. CI could never see any of it: it runs in a clean
+container.
+
+`scripts/systems/user_data.gd` decides where files go, once, for the whole run. A run
+started as `godot --script <file>` has a script attached to its main loop; the game —
+launched normally, from the editor, or exported — runs a plain `SceneTree` with none. Both
+halves were measured before this was built on. Script runs get `user://sandbox/`, so a test
+added tomorrow is protected whether or not its author has read this. `TankStore.clear()`
+additionally refuses outright outside the sandbox, as a second lock.
+
+`test/sandbox_test.gd` checks every path is in the sandbox **before** touching storage and
+quits on the first that is not, so a regressed sandbox produces a failing test rather than
+another deletion — verified by breaking the switch and confirming both. It then snapshots
+the real tanks directory (contents and timestamps) around a full sandboxed round trip.
+
+`tools/screenshot.gd` is sandboxed like everything else, so it no longer photographs the
+player's real tank: it photographs whatever the sandbox holds, seeding it when empty.
+
 ## Multiple aquariums
 
 Tanks are slots on disk:
@@ -640,6 +665,7 @@ was hard-coded once, and two suites added later never ran there until it was not
 | `shelter_test` | prey hides in cover, and does not flee the cover it is already in |
 | `seabed_test` | the GDScript floor curve agrees with the Python that draws the backdrop |
 | `colony_test` | growth, contested borders, pressure, the vacuum after a strike, the travelling bleach, floor seating, the water denominator, columns and commons, basin gating, descent |
+| `sandbox_test` | tests and tools keep their files away from the player's saves; checks paths before touching storage |
 | `playable_test` | a player can reach it: tiles for every placeable faction, a tap founds a colony, the standings appear, Bleach arms and lands |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each

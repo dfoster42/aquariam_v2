@@ -15,10 +15,16 @@ extends RefCounted
 ##   user://tanks/index.json   the slot list and which one is active
 ##   user://tanks/<id>.json    one tank
 
-const DIR: String = "user://tanks"
-const INDEX_PATH: String = "user://tanks/index.json"
+## Paths are functions rather than constants because they depend on whether this run is
+## the game or a test — see UserData, and why that matters for the player's saves.
+static func dir() -> String:
+	return UserData.path("tanks")
+
+static func index_path() -> String:
+	return UserData.path("tanks/index.json")
 ## Where single-tank saves lived before slots existed. Migrated, not abandoned.
-const LEGACY_PATH: String = "user://tank.json"
+static func legacy_path() -> String:
+	return UserData.path("tank.json")
 const FORMAT_VERSION: int = 1
 const INDEX_VERSION: int = 1
 const MAX_SLOTS: int = 12
@@ -26,11 +32,11 @@ const MAX_SLOTS: int = 12
 # ---------------------------------------------------------------- slot management
 
 static func _ensure_dir() -> void:
-	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(DIR)):
-		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(DIR))
+	if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(dir())):
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir()))
 
 static func slot_path(slot_id: String) -> String:
-	return "%s/%s.json" % [DIR, slot_id]
+	return "%s/%s.json" % [dir(), slot_id]
 
 ## The whole index: `{version, active, slots: [{id, name, saved_at}]}`.
 ##
@@ -39,9 +45,9 @@ static func slot_path(slot_id: String) -> String:
 static func index() -> Dictionary:
 	_migrate_legacy()
 	var blank := {"version": INDEX_VERSION, "active": "", "slots": []}
-	if not FileAccess.file_exists(INDEX_PATH):
+	if not FileAccess.file_exists(index_path()):
 		return blank
-	var file := FileAccess.open(INDEX_PATH, FileAccess.READ)
+	var file := FileAccess.open(index_path(), FileAccess.READ)
 	if file == null:
 		return blank
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
@@ -56,7 +62,7 @@ static func index() -> Dictionary:
 
 static func _write_index(data: Dictionary) -> Error:
 	_ensure_dir()
-	var file := FileAccess.open(INDEX_PATH, FileAccess.WRITE)
+	var file := FileAccess.open(index_path(), FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
 	file.store_string(JSON.stringify(data))
@@ -65,10 +71,10 @@ static func _write_index(data: Dictionary) -> Error:
 
 ## Moves a pre-slots `user://tank.json` into a slot rather than stranding it.
 static func _migrate_legacy() -> void:
-	if not FileAccess.file_exists(LEGACY_PATH) or FileAccess.file_exists(INDEX_PATH):
+	if not FileAccess.file_exists(legacy_path()) or FileAccess.file_exists(index_path()):
 		return
 	_ensure_dir()
-	var source := FileAccess.open(LEGACY_PATH, FileAccess.READ)
+	var source := FileAccess.open(legacy_path(), FileAccess.READ)
 	if source == null:
 		return
 	var contents := source.get_as_text()
@@ -85,7 +91,7 @@ static func _migrate_legacy() -> void:
 		"active": id,
 		"slots": [{"id": id, "name": "My Aquarium", "saved_at": int(Time.get_unix_time_from_system())}],
 	})
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(LEGACY_PATH))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(legacy_path()))
 	print("Migrated the existing tank into slot '%s'." % id)
 
 static func slots() -> Array:
@@ -250,10 +256,18 @@ static func read(slot_id: String = "") -> Dictionary:
 
 ## Removes every tank and the index. Used by tests.
 static func clear() -> void:
+	# Refused outright in the game. Nothing in the app calls this; it exists for tests
+	# and tools, and when those shared the player's directory it deleted their saved
+	# aquariums on every local test run. UserData already routes script runs elsewhere —
+	# this is the second lock, so a way of starting the game nobody has thought of yet
+	# still cannot wipe a player's tanks.
+	if not UserData.is_sandboxed():
+		push_error("TankStore.clear() refused: this run uses the player's real saves.")
+		return
 	for slot: Variant in slots():
 		var id: String = str(slot.get("id", ""))
 		if id != "" and FileAccess.file_exists(slot_path(id)):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(slot_path(id)))
-	for path in [INDEX_PATH, LEGACY_PATH]:
+	for path in [index_path(), legacy_path()]:
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
