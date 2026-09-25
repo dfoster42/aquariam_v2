@@ -65,13 +65,15 @@ func _check_pruning() -> void:
 	FileAccess.open(stale.path_join("tanks/tank_1.json"), FileAccess.WRITE).store_string("{}")
 	FileAccess.open(stale.path_join("tanks/nested/x"), FileAccess.WRITE).store_string("x")
 	# A directory named for a process that IS running, and one not named for a process at
-	# all. Neither may be touched. The live one is a process of our own: an earlier version
-	# used pid 1, which macOS reports as not running to an unprivileged caller — it belongs
-	# to root — so the "live" directory was pruned and the test blamed the code. Every
-	# sandbox belongs to a run of this same user, which is the case that has to hold.
-	var sleeper := OS.create_process("sleep", ["30"])
-	_check(sleeper > 0 and OS.is_process_running(sleeper), "could not start a live process to test with")
-	var live := base.path_join(str(sleeper))
+	# all. Neither may be touched. The live one must NOT be our child: Godot's own
+	# is_process_running() only works for children, which is how the first version of
+	# pruning deleted a concurrent run's sandbox while a test using a spawned child passed.
+	# This run's parent — the shell that started it — is alive, ours, and not our child.
+	var out := []
+	OS.execute("ps", ["-o", "ppid=", "-p", str(OS.get_process_id())], out)
+	var parent := int(str(out[0]).strip_edges()) if not out.is_empty() else -1
+	_check(parent > 1, "could not find this run's parent process to test with")
+	var live := base.path_join(str(parent))
 	var other := base.path_join("not_a_pid")
 	DirAccess.make_dir_recursive_absolute(live)
 	DirAccess.make_dir_recursive_absolute(other)
@@ -84,7 +86,6 @@ func _check_pruning() -> void:
 		"pruning removed this run's own sandbox")
 	DirAccess.remove_absolute(live)
 	DirAccess.remove_absolute(other)
-	OS.kill(sleeper)
 
 	# The recursive delete refuses anything not strictly inside its fence. Both paths are
 	# harmless if the guard were missing: one does not exist, one is the empty-ish base.
@@ -94,7 +95,7 @@ func _check_pruning() -> void:
 
 func _dead_pid() -> int:
 	for pid in range(99999, 50000, -1):
-		if not OS.is_process_running(pid):
+		if not UserData._alive(pid):
 			return pid
 	return 99999
 

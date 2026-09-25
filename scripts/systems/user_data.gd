@@ -71,9 +71,24 @@ static func prune_stale() -> void:
 		if not name.is_valid_int():
 			continue
 		var pid := name.to_int()
-		if pid == mine or OS.is_process_running(pid):
+		if pid == mine or _alive(pid):
 			continue
 		_remove_tree(base.path_join(name), base)
+
+## Whether a process of this user is running.
+##
+## Not OS.is_process_running(): that uses waitpid, which only works for the caller's OWN
+## children and reports every other process as not running — so a test running at the
+## same time as this one looked dead, and its sandbox was pruned out from under it. That
+## was the one case the per-run sandbox existed to handle. The first test of this used a
+## process it had spawned itself, which is a child, and so could not see the bug.
+##
+## `kill -0` sends no signal; it only asks whether the process exists. Anything that is
+## not a plausible pid, or a platform without `kill`, counts as alive: when in doubt, keep.
+static func _alive(pid: int) -> bool:
+	if pid <= 1 or OS.get_name() == "Windows":
+		return true
+	return OS.execute("kill", ["-0", str(pid)]) == 0
 
 ## Deletes `path` and everything under it — refusing anything not strictly inside `fence`.
 static func _remove_tree(path: String, fence: String) -> void:
