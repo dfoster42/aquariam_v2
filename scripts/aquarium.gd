@@ -269,9 +269,9 @@ func _tick_colonies(delta: float) -> void:
 func progress_snapshot() -> Dictionary:
 	var out: Dictionary = {}
 	for f: Faction in _progress:
-		var paths := (_progress[f] as FactionProgress).to_paths()
-		if not paths.is_empty():
-			out[f.resource_path] = paths
+		var progress := _progress[f] as FactionProgress
+		if not progress.is_empty():
+			out[f.resource_path] = progress.to_save()
 	return out
 
 ## This faction's progress in this tank. Made on demand for a faction the tank was not
@@ -1188,6 +1188,18 @@ func _fit_background() -> void:
 ## whole restore: a save outlives the build that wrote it, and losing one species should
 ## not cost the player the rest of the tank.
 func restore(data: Dictionary) -> bool:
+	# Earned traits first — before the early return, and before any colony is planted.
+	#
+	# Before the return, because a tank can hold its factions' progress with nothing
+	# alive in it, and skipping it lost what had just been saved. Before the colonies,
+	# because a colony reads its traits as it is founded: applied afterwards, Canopy made
+	# a restored column taller with no territory pass after it, and a reopened tank drew
+	# its old borders until the next one.
+	var earned: Variant = data.get("progress", {})
+	if typeof(earned) == TYPE_DICTIONARY:
+		for f in available_factions:
+			progress_for(f).restore_save((earned as Dictionary).get(f.resource_path, {}))
+
 	var entries: Array = data.get("fish", [])
 	var decor_entries: Array = data.get("decor", [])
 	var colony_entries: Array = data.get("colonies", [])
@@ -1221,13 +1233,6 @@ func restore(data: Dictionary) -> bool:
 				float(entry.get("biomass", -1.0)))
 			if restored_colony != null:
 				restored_colony.age = float(entry.get("age", 0.0))
-
-	var earned: Variant = data.get("progress", {})
-	if typeof(earned) == TYPE_DICTIONARY:
-		for f in available_factions:
-			var paths: Variant = (earned as Dictionary).get(f.resource_path, [])
-			if typeof(paths) == TYPE_ARRAY:
-				progress_for(f).restore_paths(paths)
 
 	var by_path: Dictionary = {}
 	for species in available_species:

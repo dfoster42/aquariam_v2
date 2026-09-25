@@ -113,17 +113,41 @@ func _recompute() -> void:
 		hardness += t.hardness
 	hardness = minf(hardness, MAX_HARDNESS)
 
-## What a save keeps: the traits earned, by resource path so a renamed trait survives.
-func to_paths() -> Array:
-	var paths: Array = []
+## What a save keeps: the traits earned, and how long each open trait's condition has
+## held so far — both keyed by resource path, so a renamed trait survives.
+##
+## The clocks are saved as well as the unlocks. Without them a tank reopened halfway to
+## Canopy showed 0% where it had shown 40%. Carrying a clock across an absence is honest
+## here because the map does not move while the app is closed: the condition that held
+## at the moment of saving still holds at the moment of reopening.
+func to_save() -> Dictionary:
+	var earned: Array = []
 	for t in unlocked:
-		paths.append(t.resource_path)
-	return paths
+		earned.append(t.resource_path)
+	var held: Dictionary = {}
+	for t: FactionTrait in _held:
+		if float(_held[t]) > 0.0 and not has(t):
+			held[t.resource_path] = snappedf(float(_held[t]), 0.01)
+	return {"unlocked": earned, "held": held}
 
-func restore_paths(paths: Array) -> void:
-	if faction == null:
+func restore_save(data: Variant) -> void:
+	if faction == null or typeof(data) != TYPE_DICTIONARY:
 		return
-	for p: Variant in paths:
-		for t in faction.tech:
-			if t != null and t.resource_path == str(p):
-				unlock(t)
+	var by_path: Dictionary = {}
+	for t in faction.tech:
+		if t != null:
+			by_path[t.resource_path] = t
+	var earned: Variant = (data as Dictionary).get("unlocked", [])
+	if typeof(earned) == TYPE_ARRAY:
+		for path: Variant in earned:
+			if by_path.has(str(path)):
+				unlock(by_path[str(path)])
+	var held: Variant = (data as Dictionary).get("held", {})
+	if typeof(held) == TYPE_DICTIONARY:
+		for path: Variant in held:
+			if by_path.has(str(path)) and not has(by_path[str(path)]):
+				_held[by_path[str(path)]] = maxf(0.0, float(held[path]))
+
+## Whether there is anything worth saving.
+func is_empty() -> bool:
+	return unlocked.is_empty() and _held.values().all(func(v: Variant) -> bool: return float(v) <= 0.0)
