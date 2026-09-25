@@ -33,6 +33,7 @@ func _process(_delta: float) -> bool:
 	_check_tap_founds_a_colony()
 	_check_standings()
 	_check_bleach_is_reachable()
+	_check_standings_on_reopen()
 
 	if _failures.is_empty():
 		print("RESULT: PASS")
@@ -145,3 +146,26 @@ func _shelf_x() -> float:
 		if coral != null and _tank.can_found(coral, x):
 			return x
 	return 1440.0
+
+## A reopened tank shows its standings immediately, with no territory pass having run.
+##
+## The Aquarium restores its save in its own _ready, before the UI's, so the signal those
+## restored colonies emit has already gone past by the time the UI connects to it. Checked
+## with no frame processed at all, which is exactly a tank reopened while paused.
+func _check_standings_on_reopen() -> void:
+	_tank.clear_colonies()
+	_press("Coral")
+	_tap(Vector2(_shelf_x(), 300.0))
+	_check(TankStore.save(_tank) == OK, "could not save the tank to reopen it")
+
+	var reopened: Node2D = load("res://scenes/main.tscn").instantiate()
+	root.add_child(reopened)
+	var tank: Aquarium = reopened.get_node("Aquarium")
+	tank.autosave_interval = 0.0
+	_check(not tank.colonies().is_empty(), "the reopened tank did not restore its colony")
+	var standings: Control = reopened.get_node("UI").get_node("%Standings")
+	_check(standings.visible,
+		"a reopened tank with colonies shows no standings until a territory pass runs")
+	root.remove_child(reopened)
+	reopened.free()
+	TankStore.clear()

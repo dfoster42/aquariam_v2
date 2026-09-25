@@ -109,6 +109,12 @@ func _ready() -> void:
 	_aquarium.population_changed.connect(_on_population_changed)
 	_aquarium.species_selected.connect(_on_species_selected)
 	_aquarium.territory_changed.connect(_on_territory_changed)
+	# Drawn once now from whatever the map already holds. The Aquarium restores its save
+	# in its own _ready, which runs before this one, so the territory_changed those
+	# restored colonies emitted has already gone past. Without this a reopened tank shows
+	# no standings until the next territory pass — and none at all while it is paused,
+	# because a paused tank does not run one.
+	_on_territory_changed(_aquarium.colonies().size())
 
 	_build_picker()
 	_on_population_changed(_aquarium.population())
