@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="Faction" load_steps=9 format=3]
+[gd_resource type="Resource" script_class="Faction" load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/faction.gd" id="1_faction"]
 [ext_resource type="Resource" path="res://resources/factions/vent.tres" id="3_deep"]
@@ -8,6 +8,7 @@
 [ext_resource type="Resource" path="res://resources/tech/kelp_regrowth.tres" id="t_1"]
 [ext_resource type="Resource" path="res://resources/tech/kelp_canopy.tres" id="t_2"]
 [ext_resource type="Resource" path="res://resources/tech/kelp_bladders.tres" id="t_3"]
+[ext_resource type="Resource" path="res://resources/factions/sargassum.tres" id="4_rise"]
 
 [resource]
 script = ExtResource("1_faction")
@@ -29,3 +30,5 @@ spread_interval = 16.0
 spread_at = 0.6
 spread_cost = 14.0
 tech = Array[ExtResource("t_script")]([ExtResource("t_0"), ExtResource("t_1"), ExtResource("t_2"), ExtResource("t_3")])
+ascends_to = ExtResource("4_rise")
+ascend_at = 0.55

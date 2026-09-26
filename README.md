@@ -608,9 +608,10 @@ a menu:
 | faction | traits |
 | --- | --- |
 | Coral | Branching (hold 8% for 20s: buds faster) · Calcified (live through a disaster: ignores a third of every one) · Barrier Reef, after Branching (keep 2 colonies: wider, heavier reefs) |
-| Kelp Court | Holdfast (hold 8%: grips more floor) · Regrowth (live through a disaster: grows faster) · Canopy, after Holdfast (hold 18%: columns 20% taller) · Gas Bladders, after Canopy (keep 4 colonies) |
+| Kelp Court | Holdfast (hold 8%: grips more floor) · Regrowth (live through a disaster: grows faster) · Canopy, after Holdfast (hold 12%: columns 20% taller) · Gas Bladders, after Canopy (keep 3 colonies: kelp can rise into Sargassum) |
 | Vent | Black Smoker (hold a basin for 30s: taller plume) · Chemosynthesis, after it (hold two basins: heavier and harder) |
 | Deep Blue | Schooling (keep 3 colonies: thicker band) · Drift (hold 12%: bleeds out slower over open ground) |
+| Sargassum | Rafting (hold 6%: bleeds out slower, thicker band) — earned only by kelp rising |
 
 Earned traits live on a `FactionProgress` per faction per tank — not on the `Faction`, which is
 shared by every tank — and colonies read every stat a trait can touch through it. They are
@@ -631,6 +632,72 @@ and Barrier Reef wanted three. After retuning the trees, not the factions, 16 ru
 minutes give Coral 16.2%, Kelp 18.0%, Vent 12.5%, Deep Blue 16.1%, with every faction earning
 1.3 to 1.9 traits a run. Kelp can still run away in a single run (45% at worst) and Deep Blue
 was wiped out once in sixteen.
+
+### Spreading was switched off, and nothing noticed
+
+For three PRs, the shelf and pelagic factions could not spread at all. To stop siblings
+splitting their own ground, a daughter was aimed at one point 2.3 of its parent's extents
+away, in one random direction — and a wide faction's extent is wide. A coral able to spread
+aimed about 1,500 units away on a 3,240-unit map, so nearly every attempt landed out of
+bounds, in a basin, or on a rival's ground, and was refused. Measured over one seven-minute
+run: coral 0 of 31 attempts, kelp 0 of 24, the shoal 0 of 58. Only the narrow vent spread.
+The one visible sign was coral sitting at exactly the two colonies it was seeded with in every
+balance run, which was read as coral being weak.
+
+A daughter now searches for ground: its preferred side first and then the other, from 1.2 to
+2.3 extents out, taking the nearest spot that is legal and **held by nobody** — not a rival,
+and not its own faction either. The first version allowed its own ground, and daughters were
+founded inside their faction's territory and split it: colonies sat at 18-28% of capacity and
+the map filled to the 40-colony cap, one shoal alone reaching twenty-two, because pelagic
+daughters were not checked at all. Open water only means spreading is claiming new ground, and
+the number of colonies is bounded by space rather than by the cap.
+
+`colony_test` now runs the same crowded seeded start the balance harness uses and requires
+every placeable faction to grow past its seeds. Against the old single-point aim it fails for
+coral, kelp and the shoal alike.
+
+### Rising: the other end of the water column
+
+The descent reaches down when a lineage is **losing**. The ascent is its opposite in cause:
+a lineage rises when it is **thriving**, so the two ends of the water column are reached by
+opposite fortunes.
+
+It is gated by the tech tree. Kelp Court's last trait, **Gas Bladders**, lets a kelp colony
+holding its ground (`ascend_at` pressure or better) release **Sargassum** into the open
+water above it — free-floating mats of seaweed, a real thing. Sargassum is pelagic and not
+placeable: like the Vent, the only way to get one is to earn it, and like Deep Blue it bleeds
+out without a reef holding the floor beneath it. It has one trait of its own, Rafting. A kelp
+forest that has learned to float seeds new rafts rather than stacking a second one over the
+first: a rise is refused where Sargassum already holds that stretch of water.
+
+Two things were wrong on the first try:
+
+**It almost never happened, for three reasons stacked on each other.** Gas Bladders wanted
+four colonies; kelp could not reach four because spreading was broken (above); and Canopy, the
+trait before it, wanted 18% of the sea while kelp averages about 12%. Measured over 16 runs,
+Sargassum first appeared in three, then — with spreading fixed but Canopy unchanged — in two of
+twelve. Gas Bladders now wants three colonies, Canopy 12%, and rising a pressure of 0.55 rather
+than 0.7. Sargassum now appears in seven runs of twelve.
+
+**It lived under the HUD.** Sargassum was placed at 7% of map height, near the surface, which
+is where it belongs thematically — and at the widest zoom that is exactly where the top bar,
+the standings and the feed sit. The first screenshot showed a faint gold edge behind the
+words "Kelp Court 41%". It sits at 19% now: near the surface, below the HUD, above Deep Blue.
+
+Twelve runs of seven minutes with spreading working and Sargassum reachable:
+
+| faction | mean share | colonies | wiped out / absent | traits |
+| --- | ---: | ---: | ---: | ---: |
+| Coral | 22.5% | 2.3 | 0/12 | 2.0 |
+| Kelp Court | 12.3% | 3.2 | 0/12 | 2.2 |
+| Vent | 12.1% | 13.4 | 1/12 | 1.3 |
+| Deep Blue | 20.5% | 2.8 | 0/12 | 1.8 |
+| Sargassum | 4.0% | 1.1 | absent in 5/12 | 0.2 |
+
+**Not balanced yet, and said plainly:** coral and the shoal lead and the vent and kelp trail.
+Making spreading work helped the factions that claim open water best, and that is a balance
+pass of its own. Kelp's own share understates its lineage — rising spends kelp biomass on
+Sargassum, and the two together hold 16.3%.
 
 ## Multiple aquariums
 
@@ -707,7 +774,7 @@ was hard-coded once, and two suites added later never ran there until it was not
 | `seabed_test` | the GDScript floor curve agrees with the Python that draws the backdrop |
 | `colony_test` | growth, contested borders, pressure, the vacuum after a strike, the travelling bleach, floor seating, the water denominator, columns and commons, basin gating, descent |
 | `sandbox_test` | tests and tools keep their files away from the player's saves; checks paths before touching storage |
-| `tech_test` | traits wait for their clocks, prerequisites gate the tree, effects show, surviving hardens, basins count, progress survives a save |
+| `tech_test` | traits wait for their clocks, prerequisites gate the tree, effects show, surviving hardens, basins count, progress survives a save, kelp rises into Sargassum only when earned and thriving |
 | `playable_test` | a player can reach it: tiles for every placeable faction, a tap founds a colony, the standings appear, Bleach arms and lands |
 
 Tests disable `autosave_interval`. Several tanks can be alive at once in a test, and each

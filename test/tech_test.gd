@@ -21,6 +21,7 @@ func _process(_delta: float) -> bool:
 	_check_progress_only_save()
 	_check_clock_survives_a_save()
 	_check_hardness_is_capped()
+	_check_ascent()
 	if _failures.is_empty():
 		print("RESULT: PASS")
 	else:
@@ -273,3 +274,64 @@ func _check_clock_survives_a_save() -> void:
 		"a clock at %d%% came back at %d%%" % [roundi(before * 100.0), roundi(after * 100.0)])
 	_done(back)
 	TankStore.clear()
+
+## The tech tree decides when a new faction can appear: kelp rises into Sargassum only
+## once it has earned Gas Bladders, and only while it is thriving — the opposite cause to
+## the descent, which is driven by losing.
+func _check_ascent() -> void:
+	var tank := _tank()
+	var kelp := _faction(tank, "Kelp Court")
+	var sargassum := _faction(tank, "Sargassum")
+	if kelp == null or sargassum == null:
+		return
+	_check(kelp.ascends_to == sargassum, "Kelp Court does not rise into Sargassum")
+	_check(not sargassum.placeable, "Sargassum is placeable; it is meant to be earned")
+	_check(sargassum.claim == Faction.Claim.PELAGIC, "Sargassum is not a free-floating faction")
+	var risen: Array = []
+	tank.faction_ascended.connect(func(from: Faction, to: Faction) -> void: risen.append([from, to]))
+
+	var parent := tank.plant_colony(kelp, Vector2(_ground_x(tank, kelp, 1500.0), 400.0), kelp.capacity)
+	var cycles := int(kelp.ascend_interval * 3.0 / STEP)
+
+	# Thriving, but without the trait: nothing rises.
+	for i in cycles:
+		parent.pressure = 1.0
+		parent._tick_ascent(STEP)
+	_check(_count(tank, sargassum) == 0, "kelp rose without having earned Gas Bladders")
+
+	var p := tank.progress_for(kelp)
+	for name in ["Holdfast", "Canopy", "Gas Bladders"]:
+		p.unlock(_trait(kelp, name))
+	_check(p.can_ascend, "earning Gas Bladders did not allow the kelp to rise")
+
+	# Earned, but losing: still nothing. Rising is for a lineage that is winning.
+	for i in cycles:
+		parent.pressure = 0.2
+		parent._tick_ascent(STEP)
+	_check(_count(tank, sargassum) == 0, "a kelp colony losing its ground rose anyway")
+
+	# Earned and thriving: Sargassum appears in its band, above the reef that released it.
+	for i in cycles:
+		parent.pressure = 1.0
+		parent._tick_ascent(STEP)
+	_check(_count(tank, sargassum) == 1,
+		"a thriving kelp with Gas Bladders produced %d Sargassum colonies, expected exactly 1"
+			% _count(tank, sargassum))
+	for colony in tank.colonies():
+		if colony.faction != sargassum:
+			continue
+		var band_y := tank.bounds().position.y + tank.bounds().size.y * sargassum.altitude
+		_check(absf(colony.global_position.y - band_y) < 1.0, "Sargassum was not placed in its band")
+		_check(absf(colony.global_position.x - parent.global_position.x) < 1.0,
+			"Sargassum did not rise above the reef that released it")
+		_check(not colony.sprite.visible, "Sargassum draws a rooted sprite in open water")
+	_check(risen.size() == 1 and risen[0][0] == kelp and risen[0][1] == sargassum,
+		"the rise emitted %d faction_ascended events" % risen.size())
+	_done(tank)
+
+func _count(tank: Aquarium, f: Faction) -> int:
+	var n := 0
+	for colony in tank.colonies():
+		if colony.faction == f:
+			n += 1
+	return n

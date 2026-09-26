@@ -25,6 +25,8 @@ signal colony_lost(faction: Faction)
 signal faction_evolved(faction: Faction, trait_: FactionTrait)
 ## A beaten lineage reached down and founded `to` on deeper ground.
 signal faction_descended(from: Faction, to: Faction)
+## A thriving lineage released `to` into the open water above it.
+signal faction_ascended(from: Faction, to: Faction)
 ## A faction's last colony died.
 signal faction_extinct(faction: Faction)
 ## Fires when the undo button should enable or disable.
@@ -56,6 +58,10 @@ const TERRITORY_INTERVAL: float = 0.25
 const STRIKE_RADIUS: float = 360.0
 ## How many points across a pelagic colony's width are tested for benthic support.
 const SUPPORT_SAMPLES: int = 5
+## How far from its parent a daughter is founded, in the parent's extents. Close enough
+## to join the parent's ground, far enough not to be founded inside it.
+const SPREAD_MIN_GAP: float = 1.2
+const SPREAD_MAX_GAP: float = 2.3
 ## How much deeper the ground has to be before it counts as a descent, in world units.
 ## Without a floor on it, a colony "descends" onto the gentle dip next door forever.
 const DESCENT_DROP: float = 90.0
@@ -438,6 +444,7 @@ func plant_colony(faction: Faction, position: Vector2, start_biomass: float = -1
 	colony.released.connect(_on_colony_released)
 	colony.spreading.connect(_on_colony_spreading)
 	colony.descending.connect(_on_colony_descending)
+	colony.ascending.connect(_on_colony_ascending)
 	colony.died.connect(_on_colony_died)
 	colony_layer.add_child(colony)
 	_colonies.append(colony)
@@ -581,31 +588,57 @@ func _on_colony_released(colony: Colony, position: Vector2) -> void:
 func _on_colony_spreading(parent: Colony, position: Vector2) -> void:
 	if _colonies.size() >= MAX_COLONIES or _territory == null:
 		return
-	var margin := Colony.BASE_RADIUS
-	if position.x < _bounds.position.x + margin or position.x > _bounds.end.x - margin:
-		return
-	# Re-seated on the floor: a daughter is placed by horizontal offset and the ground
-	# under that offset is wherever the curve says, not wherever the parent happened to
-	# sit. Without this a chain of daughters walks off the terrain in a straight line.
-	position = Vector2(position.x, _seabed.height_at(position.x))
-	# Sampled a cell ABOVE the floor, not at it. The cell containing the floor is masked
-	# as rock and can never be owned, so asking who holds the exact floor height always
-	# answered "nobody" and the guard let daughters land on a rival's held ground.
-	var holder := _territory.owner_at(
-		Vector2(position.x, position.y - _territory.cell_size()))
-	if holder != null and holder.faction != parent.faction:
-		return
-	# Checked before charging. plant_colony refuses ground the faction cannot occupy —
-	# a basin, for a shelf faction — and the parent had already paid by then, so a
-	# colony budding toward a basin quietly burned biomass and got nothing for it.
-	if not can_found(parent.faction, position.x):
+	var x := _spread_ground(parent, signf(position.x - parent.global_position.x))
+	if x < 0.0:
 		return
 	var stake := parent.pay_to_spread()
 	if stake <= 0.0:
 		return
-	if plant_colony(parent.faction, position, stake) == null:
+	if plant_colony(parent.faction, Vector2(x, 0.0), stake) == null:
 		# Nothing was founded, so nothing should have been spent.
 		parent.biomass += stake
+
+## Where a daughter of `parent` can go: the nearest legal ground between SPREAD_MIN_GAP and
+## SPREAD_MAX_GAP of its extents away, on the side it asked for first and then the other.
+## Negative when there is nowhere.
+##
+## Searched rather than bet on. A daughter used to be aimed at one point, SPREAD_MAX_GAP
+## extents out, in one random direction — and a wide faction's extent is wide: a coral
+## able to spread aimed ~1,500 units away on a 3,240-unit map. Nearly every attempt landed
+## out of bounds, in a basin, or on a rival's ground, and was refused. Measured over one
+## seven-minute run: coral 0 of 31 attempts, kelp 0 of 24, the pelagic shoal 0 of 58.
+## Only the narrow vent could spread at all.
+func _spread_ground(parent: Colony, preferred: float) -> float:
+	var reach := parent.extent().x
+	var side := preferred if preferred != 0.0 else (1.0 if randf() < 0.5 else -1.0)
+	var steps := int((SPREAD_MAX_GAP - SPREAD_MIN_GAP) / 0.1) + 1
+	for direction: float in [side, -side]:
+		for i in steps:
+			var x := parent.global_position.x \
+				+ direction * reach * (SPREAD_MIN_GAP + 0.1 * float(i))
+			if x < _bounds.position.x + Colony.BASE_RADIUS \
+					or x > _bounds.end.x - Colony.BASE_RADIUS:
+				break
+			# Checked before charging: plant_colony refuses ground the faction cannot
+			# occupy, and a parent that had already paid lost the biomass for nothing.
+			if not can_found(parent.faction, x):
+				continue
+			# Only onto water NOBODY holds — a rival's or its own. Spreading is claiming new
+			# ground. Allowed onto its own, a daughter was founded inside its faction's
+			# territory and the two split it: measured, colonies sat at 18-28% of capacity
+			# and the map filled to the colony cap, one shoal alone reaching twenty-two.
+			# Pelagic daughters were not checked at all, which is how it got there.
+			#
+			# Sampled a cell above the floor for a reef — the cell holding the floor is
+			# masked as rock, so asking about the floor itself always answered "nobody" —
+			# and at the band's own depth for a shoal.
+			var probe_y := _seabed.height_at(x) - _territory.cell_size()
+			if not parent.is_benthic():
+				probe_y = _bounds.position.y + _bounds.size.y * parent.faction.altitude
+			if _territory.owner_at(Vector2(x, probe_y)) != null:
+				continue
+			return x
+	return -1.0
 
 ## A colony is losing and wants to found its successor on deeper ground.
 ##
@@ -631,6 +664,29 @@ func _on_colony_descending(parent: Colony, successor: Faction) -> void:
 	# `colony_founded` is not emitted here: plant_colony already owns that signal.
 	_mark_disaster(colony.global_position, colony.extent().x * 0.7, successor.color)
 	faction_descended.emit(parent.faction, successor)
+
+## A thriving colony releases its successor into the open water above it.
+##
+## Refused where the successor already holds that stretch of water: a kelp forest that
+## has learned to float should seed new rafts, not stack a second one on the first every
+## twenty seconds.
+func _on_colony_ascending(parent: Colony, successor: Faction) -> void:
+	if successor == null or _colonies.size() >= MAX_COLONIES:
+		return
+	var x := parent.global_position.x
+	for other in _colonies:
+		if other.faction == successor \
+				and absf(other.global_position.x - x) < other.extent().x:
+			return
+	var stake := parent.pay_to_ascend()
+	if stake <= 0.0:
+		return
+	var colony := plant_colony(successor, Vector2(x, 0.0), stake)
+	if colony == null:
+		parent.biomass += stake
+		return
+	_mark_disaster(colony.global_position, colony.extent().x * 0.5, successor.color)
+	faction_ascended.emit(parent.faction, successor)
 
 ## The nearest x that `successor` may be founded on and that is meaningfully deeper than
 ## `parent` stands. Negative when there is nowhere to go.

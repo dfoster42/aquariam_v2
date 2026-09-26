@@ -45,6 +45,7 @@ func _process(_delta: float) -> bool:
 	_test_pelagic_needs_support()
 	_test_ravine_gating()
 	_test_descent()
+	_test_factions_actually_spread()
 	_test_earned_ground()
 	_test_water_denominator()
 	_test_age_round_trip()
@@ -411,8 +412,12 @@ func _test_seated_on_floor() -> void:
 
 	# Daughters walk along the terrain rather than off it.
 	_advance(tank, 200.0)
+	# Benthic ones only. A pelagic colony belongs in its band — and kelp left alone this
+	# long earns Gas Bladders and releases Sargassum, which floats by design.
 	var airborne := 0
 	for colony in tank.colonies():
+		if not colony.is_benthic():
+			continue
 		if absf(colony.global_position.y - seabed.height_at(colony.global_position.x)) > 1.0:
 			airborne += 1
 	_check(airborne == 0, "%d colonies are not seated on the floor after spreading" % airborne)
@@ -769,5 +774,56 @@ func _test_earned_ground() -> void:
 	_check(holder != null and holder.faction == deep,
 		"a mature shelf colony next door holds the floor of a basin it cannot live in")
 
+	tank.clear_colonies()
+	tank.queue_free()
+
+## Every faction the player can place must be able to grow beyond its seeds on a crowded map.
+##
+## Spreading was switched off for three PRs and nothing noticed. A daughter was aimed at one
+## point, 2.3 of the parent's extents away, and a wide faction's extent is wide — so on a map
+## with neighbours nearly every attempt was refused: 0 of 31 for coral, 0 of 24 for kelp,
+## 0 of 58 for the shoal in one seven-minute run. The only sign was coral sitting at exactly
+## the two colonies it was seeded with in every balance run.
+func _test_factions_actually_spread() -> void:
+	var tank := _tank()
+	if tank == null:
+		return
+	# The same crowded start tools/balance.gd uses: two seeds of everything placeable.
+	seed(13)
+	var seeded: Dictionary = {}
+	for f in tank.available_factions:
+		if not f.placeable:
+			continue
+		for n in 2:
+			for attempt in 400:
+				var x := randf_range(120.0, 3120.0)
+				if tank.can_found(f, x):
+					tank.plant_colony(f, Vector2(x, 400.0), 30.0)
+					seeded[f] = int(seeded.get(f, 0)) + 1
+					break
+	var landed_on_held := 0
+	_advance(tank, 180.0)
+
+	for f: Faction in seeded:
+		var n := 0
+		for colony in tank.colonies():
+			if colony.faction == f:
+				n += 1
+		_check(n > int(seeded[f]),
+			"%s never spread: %d colonies after three minutes, seeded with %d"
+				% [f.display_name, n, int(seeded[f])])
+
+	# And a daughter's ground is open water, never ground anyone — itself included —
+	# already holds, or colonies are founded inside their own territory and split it.
+	for colony in tank.colonies():
+		if not colony.is_benthic():
+			continue
+		var x := tank._spread_ground(colony, 1.0)
+		if x < 0.0:
+			continue
+		var floor_y := tank.seabed().height_at(x) - tank.territory().cell_size()
+		if tank.territory().owner_at(Vector2(x, floor_y)) != null:
+			landed_on_held += 1
+	_check(landed_on_held == 0, "%d spread targets were already held ground" % landed_on_held)
 	tank.clear_colonies()
 	tank.queue_free()

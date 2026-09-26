@@ -120,6 +120,7 @@ func _ready() -> void:
 	_aquarium.territory_changed.connect(_on_territory_changed)
 	_aquarium.faction_evolved.connect(_on_faction_evolved)
 	_aquarium.faction_descended.connect(_on_faction_descended)
+	_aquarium.faction_ascended.connect(_on_faction_ascended)
 	_aquarium.faction_extinct.connect(_on_faction_extinct)
 	_build_feed()
 	_build_tech_sheet()
@@ -550,6 +551,9 @@ func _on_faction_evolved(faction: Faction, trait_: FactionTrait) -> void:
 func _on_faction_descended(from: Faction, to: Faction) -> void:
 	announce("%s reached down into a basin: %s" % [from.display_name, to.display_name],
 		to.color)
+
+func _on_faction_ascended(from: Faction, to: Faction) -> void:
+	announce("%s rose into open water: %s" % [from.display_name, to.display_name], to.color)
 
 func _on_faction_extinct(faction: Faction) -> void:
 	announce("%s is gone" % faction.display_name, faction.color)

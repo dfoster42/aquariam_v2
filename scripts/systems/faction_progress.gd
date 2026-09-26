@@ -24,6 +24,8 @@ var spread_interval_mul: float = 1.0
 var band_thickness_mul: float = 1.0
 var decay_mul: float = 1.0
 var hardness: float = 0.0
+## Whether an earned trait lets this faction release its `ascends_to`.
+var can_ascend: bool = false
 
 func _init(owner: Faction = null) -> void:
 	faction = owner
@@ -102,6 +104,7 @@ func _recompute() -> void:
 	band_thickness_mul = 1.0
 	decay_mul = 1.0
 	hardness = 0.0
+	can_ascend = false
 	for t in unlocked:
 		capacity_mul *= t.capacity_mul
 		growth_mul *= t.growth_mul
@@ -111,6 +114,7 @@ func _recompute() -> void:
 		band_thickness_mul *= t.band_thickness_mul
 		decay_mul *= t.decay_mul
 		hardness += t.hardness
+		can_ascend = can_ascend or t.enables_ascent
 	hardness = minf(hardness, MAX_HARDNESS)
 
 ## What a save keeps: the traits earned, and how long each open trait's condition has

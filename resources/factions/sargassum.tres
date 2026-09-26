@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="Faction" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction.gd" id="1_faction"]
+[ext_resource type="Resource" path="res://resources/species/yellowtang.tres" id="2_species"]
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="t_script"]
+[ext_resource type="Resource" path="res://resources/tech/sargassum_rafting.tres" id="t_0"]
+
+[resource]
+script = ExtResource("1_faction")
+display_name = "Sargassum"
+color = Color(0.82, 0.68, 0.22, 1)
+species = ExtResource("2_species")
+claim = 1
+placeable = false
+altitude = 0.19
+band_thickness = 200.0
+band_spread = 2.4
+decay_unsupported = 2.0
+capacity = 110.0
+growth_rate = 0.05
+biomass_per_fish = 26.0
+spread_interval = 15.0
+spread_at = 0.5
+spread_cost = 12.0
+tech = Array[ExtResource("t_script")]([ExtResource("t_0")])

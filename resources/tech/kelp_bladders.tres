@@ -6,9 +6,10 @@
 [resource]
 script = ExtResource("1_trait")
 display_name = "Gas Bladders"
-description = "grows faster"
+description = "floats: thriving kelp can rise into open water"
 requires = ExtResource("2_req")
 condition = 1
-threshold = 4.0
+threshold = 3.0
 hold_for = 15.0
 growth_mul = 1.15
+enables_ascent = true
