@@ -674,9 +674,15 @@ func _on_colony_ascending(parent: Colony, successor: Faction) -> void:
 	if successor == null or _colonies.size() >= MAX_COLONIES:
 		return
 	var x := parent.global_position.x
+	# Refused anywhere inside an existing raft's claim — out to REACH of its extents, the
+	# distance Territory actually evaluates it over. Checking one extent missed claims
+	# reaching between 1 and REACH extents, so a second raft could be founded inside the
+	# first. Measured against the footprint rather than against who currently owns the
+	# cell: above a thriving kelp the kelp's own column usually wins that water, which
+	# would have waved a second raft through on top of the first.
 	for other in _colonies:
 		if other.faction == successor \
-				and absf(other.global_position.x - x) < other.extent().x:
+				and absf(other.global_position.x - x) < other.extent().x * Territory.REACH:
 			return
 	var stake := parent.pay_to_ascend()
 	if stake <= 0.0:
