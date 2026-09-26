@@ -22,6 +22,7 @@ func _process(_delta: float) -> bool:
 	_check_clock_survives_a_save()
 	_check_hardness_is_capped()
 	_check_ascent()
+	_check_rises_do_not_overlap()
 	if _failures.is_empty():
 		print("RESULT: PASS")
 	else:
@@ -335,3 +336,34 @@ func _count(tank: Aquarium, f: Faction) -> int:
 		if colony.faction == f:
 			n += 1
 	return n
+
+## A rise is refused anywhere inside an existing raft's claim, not just near its centre.
+func _check_rises_do_not_overlap() -> void:
+	var tank := _tank()
+	var kelp := _faction(tank, "Kelp Court")
+	var sargassum := _faction(tank, "Sargassum")
+	for name in ["Holdfast", "Canopy", "Gas Bladders"]:
+		tank.progress_for(kelp).unlock(_trait(kelp, name))
+	var raft := tank.plant_colony(sargassum, Vector2(1200.0, 0.0), 80.0)
+	var reach := raft.extent().x
+	var cycles := int(kelp.ascend_interval * 1.5 / STEP)
+
+	# Inside the raft's claim but beyond one extent — where the old check let a second in.
+	var near := tank.plant_colony(kelp,
+		Vector2(_ground_x(tank, kelp, 1200.0 + reach * 1.4), 400.0), kelp.capacity)
+	for i in cycles:
+		near.pressure = 1.0
+		near._tick_ascent(STEP)
+	_check(_count(tank, sargassum) == 1,
+		"a rise %.1f extents from an existing raft was founded inside its claim"
+			% (absf(near.global_position.x - 1200.0) / reach))
+	tank._detach_colony(near)
+
+	# Well clear of it: allowed.
+	var far := tank.plant_colony(kelp,
+		Vector2(_ground_x(tank, kelp, 1200.0 + reach * (Territory.REACH + 0.3)), 400.0), kelp.capacity)
+	for i in cycles:
+		far.pressure = 1.0
+		far._tick_ascent(STEP)
+	_check(_count(tank, sargassum) == 2, "a rise clear of the existing raft was refused")
+	_done(tank)

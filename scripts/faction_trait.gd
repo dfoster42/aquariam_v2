@@ -48,5 +48,6 @@ enum Condition {
 ## Fraction of any disaster's damage that is ignored. Adds across traits, capped.
 @export_range(0.0, 0.9, 0.05) var hardness: float = 0.0
 ## Earning this lets the faction rise: a thriving colony releases the faction's
-## `ascends_to` into open water. The tech tree deciding when a new faction can appear.
+## `ascends_to` into open water. This is how the tech tree decides when a new faction can
+## appear.
 @export var enables_ascent: bool = false

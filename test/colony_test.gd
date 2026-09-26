@@ -804,7 +804,13 @@ func _test_factions_actually_spread() -> void:
 	var landed_on_held := 0
 	_advance(tank, 180.0)
 
-	for f: Faction in seeded:
+	# Every placeable faction, not just the ones whose random placement happened to
+	# succeed — a faction that got no seeds would otherwise drop out of the check silently.
+	for f in tank.placeable_factions():
+		_check(int(seeded.get(f, 0)) == 2,
+			"%s got %d of its 2 seeds; the check below would skip it"
+				% [f.display_name, int(seeded.get(f, 0))])
+	for f in tank.placeable_factions():
 		var n := 0
 		for colony in tank.colonies():
 			if colony.faction == f:
