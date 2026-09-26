@@ -19,6 +19,8 @@ signal spreading(colony: Colony, position: Vector2)
 ## Asks the tank for deeper ground to put a successor faction on. Same division of
 ## labour: the colony knows it is losing, only the tank knows what ground exists.
 signal descending(colony: Colony, successor: Faction)
+## Asks the tank to release `successor` into the open water above this colony.
+signal ascending(colony: Colony, successor: Faction)
 signal died(colony: Colony)
 
 ## Below this a colony is rubble and is cleared. Not zero: a colony asymptotically
@@ -83,6 +85,7 @@ var supported: bool = true
 var _fish_debt: float = 0.0
 var _spread_timer: float = 0.0
 var _descend_timer: float = 0.0
+var _ascend_timer: float = 0.0
 ## Biomass a disaster has taken but that has not yet drained away. Damage is a WOUND,
 ## not a subtraction — see `damage()`.
 var _draining: float = 0.0
@@ -164,6 +167,7 @@ func tick(delta: float) -> void:
 
 	_tick_spread(delta)
 	_tick_descent(delta)
+	_tick_ascent(delta)
 
 	if faction.species == null or faction.biomass_per_fish <= 0.0:
 		return
@@ -221,6 +225,33 @@ func _tick_descent(delta: float) -> void:
 	if biomass - faction.descend_cost < MIN_BIOMASS:
 		return
 	descending.emit(self, faction.descends_to)
+
+## Rises, once the faction has earned the trait that allows it and this colony is thriving.
+##
+## The opposite cause to the descent on purpose: a lineage reaches down when it is losing
+## and rises when it is winning, so the two ends of the water column are reached by
+## opposite fortunes.
+func _tick_ascent(delta: float) -> void:
+	if faction.ascends_to == null or faction.ascend_interval <= 0.0:
+		return
+	if progress == null or not progress.can_ascend:
+		return
+	_ascend_timer += delta
+	if _ascend_timer < faction.ascend_interval:
+		return
+	_ascend_timer = 0.0
+	if pressure < faction.ascend_at or biomass - faction.ascend_cost < MIN_BIOMASS:
+		return
+	ascending.emit(self, faction.ascends_to)
+
+## Pays for a rise. Returns what the risen colony should start with, or 0.
+func pay_to_ascend() -> float:
+	var cost := faction.ascend_cost
+	if _dead or cost <= 0.0 or biomass - cost < MIN_BIOMASS:
+		return 0.0
+	biomass -= cost
+	_apply_size()
+	return cost
 
 ## Pays for a descent. Returns what the deeper colony should start with, or 0.
 func pay_to_descend() -> float:

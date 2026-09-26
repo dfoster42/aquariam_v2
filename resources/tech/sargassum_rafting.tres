@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="FactionTrait" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/faction_trait.gd" id="1_trait"]
+
+[resource]
+script = ExtResource("1_trait")
+display_name = "Rafting"
+description = "drifts farther from the reefs that feed it"
+condition = 0
+threshold = 0.06
+hold_for = 20.0
+decay_mul = 0.5
+band_thickness_mul = 1.2

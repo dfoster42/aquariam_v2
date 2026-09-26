@@ -9,6 +9,6 @@ display_name = "Canopy"
 description = "columns climb toward the light"
 requires = ExtResource("2_req")
 condition = 0
-threshold = 0.18
+threshold = 0.12
 hold_for = 30.0
 reach_mul = 1.2

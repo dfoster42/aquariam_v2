@@ -125,6 +125,23 @@ enum Claim {
 ## survives — a lineage reaches down, it does not migrate.
 @export_range(1.0, 200.0, 1.0) var descend_cost: float = 22.0
 
+@export_group("Ascent")
+## What this faction releases into open water when it rises. Null means it does not.
+##
+## The mirror of `descends_to`, and deliberately its opposite in cause: a lineage reaches
+## DOWN because it is losing, and rises because it is thriving. Gated by the tech tree —
+## nothing ascends until it has earned a trait that `enables_ascent`.
+@export var ascends_to: Faction
+
+## Pressure at or above which a colony may rise: only a colony holding its ground does.
+@export_range(0.0, 1.0, 0.05) var ascend_at: float = 0.7
+
+## Seconds between a colony's attempts to rise.
+@export_range(0.0, 300.0, 1.0) var ascend_interval: float = 20.0
+
+## Biomass the parent spends on it; the risen colony starts with it.
+@export_range(1.0, 200.0, 1.0) var ascend_cost: float = 18.0
+
 @export_group("Growth")
 ## Biomass a colony of this faction tends toward when nothing is pressing on it.
 @export_range(10.0, 1000.0, 5.0) var capacity: float = 130.0
